@@ -4,22 +4,71 @@ export const SIDEBAR_KEY = 'sjp-sidebar-collapsed';
 export const NAV_FAVORITES_KEY = 'sjp-nav-favorites';
 export const NAV_RECENT_KEY = 'sjp-nav-recent';
 export const NAV_CLOSED_GROUPS_KEY = 'sjp-nav-closed-groups';
+const ACTIVE_WORKSPACE_KEY = 'sjp-active-workspace';
 
-export const readToken = (): string => {
+export const readActiveWorkspace = (): string => readLocal(ACTIVE_WORKSPACE_KEY) ?? '';
+export const writeActiveWorkspace = (id: string): void => {
+  if (id) writeLocal(ACTIVE_WORKSPACE_KEY, id);
+  else removeLocal(ACTIVE_WORKSPACE_KEY);
+};
+
+/** Private-mode browsers can throw on storage; preferences fall back to defaults instead of breaking the app. */
+let storageBlocked = false;
+
+export const storageBlockedByBrowser = (): boolean => storageBlocked;
+
+const readLocal = (key: string): string | null => {
   try {
-    return localStorage.getItem(TOKEN_KEY) ?? '';
-  } catch {
-    return '';
+    return localStorage.getItem(key);
+  } catch (error) {
+    storageBlocked = true;
+    void error;
+    return null;
   }
 };
 
-export const writeToken = (token: string): void => {
+const writeLocal = (key: string, value: string): void => {
   try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* storage can be disabled */
+    localStorage.setItem(key, value);
+  } catch (error) {
+    storageBlocked = true;
+    void error;
   }
+};
+
+const removeLocal = (key: string): void => {
+  try {
+    localStorage.removeItem(key);
+  } catch (error) {
+    storageBlocked = true;
+    void error;
+  }
+};
+
+const readSession = (key: string): string | null => {
+  try {
+    return sessionStorage.getItem(key);
+  } catch (error) {
+    storageBlocked = true;
+    void error;
+    return null;
+  }
+};
+
+const writeSession = (key: string, value: string): void => {
+  try {
+    sessionStorage.setItem(key, value);
+  } catch (error) {
+    storageBlocked = true;
+    void error;
+  }
+};
+
+export const readToken = (): string => readLocal(TOKEN_KEY) ?? '';
+
+export const writeToken = (token: string): void => {
+  if (token) writeLocal(TOKEN_KEY, token);
+  else removeLocal(TOKEN_KEY);
 };
 
 /** Read a non-HttpOnly cookie (used for the double-submit CSRF token). */
@@ -41,21 +90,13 @@ export type ThemePref = 'light' | 'dark' | 'system';
 export type ResolvedTheme = 'light' | 'dark';
 
 export const readThemePref = (): ThemePref => {
-  try {
-    const stored = localStorage.getItem(THEME_KEY);
-    return stored === 'light' || stored === 'dark' ? stored : 'system';
-  } catch {
-    return 'system';
-  }
+  const stored = readLocal(THEME_KEY);
+  return stored === 'light' || stored === 'dark' ? stored : 'system';
 };
 
 export const writeThemePref = (pref: ThemePref): void => {
-  try {
-    if (pref === 'system') localStorage.removeItem(THEME_KEY);
-    else localStorage.setItem(THEME_KEY, pref);
-  } catch {
-    /* ignore */
-  }
+  if (pref === 'system') removeLocal(THEME_KEY);
+  else writeLocal(THEME_KEY, pref);
 };
 
 export const systemPrefersDark = (): boolean => {
@@ -75,27 +116,15 @@ export const readTheme = (): ResolvedTheme => resolveTheme();
 /** Kept for explicit light/dark writes; clears the `system` override. */
 export const writeTheme = (theme: ResolvedTheme): void => writeThemePref(theme);
 
-export const readSidebarCollapsed = (): boolean => {
-  try {
-    return localStorage.getItem(SIDEBAR_KEY) === '1';
-  } catch {
-    return false;
-  }
-};
+export const readSidebarCollapsed = (): boolean => readLocal(SIDEBAR_KEY) === '1';
 
-export const writeSidebarCollapsed = (collapsed: boolean): void => {
-  try {
-    localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0');
-  } catch {
-    /* ignore */
-  }
-};
+export const writeSidebarCollapsed = (collapsed: boolean): void => writeLocal(SIDEBAR_KEY, collapsed ? '1' : '0');
 
 /** Returns `null` when the key has never been written, so callers can seed defaults. */
 function readStringList(key: string): string[] | null {
+  const raw = readLocal(key);
+  if (raw === null) return null;
   try {
-    const raw = localStorage.getItem(key);
-    if (raw === null) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed.filter((value): value is string => typeof value === 'string' && value.length > 0);
@@ -105,41 +134,73 @@ function readStringList(key: string): string[] | null {
 }
 
 function writeStringList(key: string, values: string[]): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(values));
-  } catch {
-    /* storage can be disabled */
-  }
+  writeLocal(key, JSON.stringify(values));
 }
 
-export const readNavFavorites = (): string[] | null => readStringList(NAV_FAVORITES_KEY);
-export const writeNavFavorites = (paths: string[]): void => writeStringList(NAV_FAVORITES_KEY, paths);
+const navStorageKey = (key: string, userId?: string): string => userId ? `${key}:${userId}` : key;
 
-export const readNavRecent = (): string[] => readStringList(NAV_RECENT_KEY) ?? [];
-export const writeNavRecent = (paths: string[]): void => writeStringList(NAV_RECENT_KEY, paths);
+export const readNavFavorites = (userId?: string): string[] | null => readStringList(navStorageKey(NAV_FAVORITES_KEY, userId));
+export const writeNavFavorites = (paths: string[], userId?: string): void => writeStringList(navStorageKey(NAV_FAVORITES_KEY, userId), paths);
 
-export const readNavClosedGroups = (): string[] | null => readStringList(NAV_CLOSED_GROUPS_KEY);
-export const writeNavClosedGroups = (labels: string[]): void => writeStringList(NAV_CLOSED_GROUPS_KEY, labels);
+export const readNavRecent = (userId?: string): string[] => readStringList(navStorageKey(NAV_RECENT_KEY, userId)) ?? [];
+export const writeNavRecent = (paths: string[], userId?: string): void => writeStringList(navStorageKey(NAV_RECENT_KEY, userId), paths);
+
+export const readNavClosedGroups = (userId?: string): string[] | null => readStringList(navStorageKey(NAV_CLOSED_GROUPS_KEY, userId));
+export const writeNavClosedGroups = (labels: string[], userId?: string): void => writeStringList(navStorageKey(NAV_CLOSED_GROUPS_KEY, userId), labels);
+
+const EXTRA_COLUMNS_PREFIX = 'sjp-extra-columns:';
+
+/** Columns this browser added to its own view, so new fields never change another user's layout. */
+export const readExtraColumns = (table: string): string[] => readStringList(EXTRA_COLUMNS_PREFIX + table) ?? [];
+export const writeExtraColumns = (table: string, keys: string[]): void => writeStringList(EXTRA_COLUMNS_PREFIX + table, keys);
+
+const VIEW_RECORD_PREFIX = 'sjp-view-record:';
+
+/** Last record opened inside a saved view, used to restore position by Record ID. */
+export const readViewRecord = (viewId: string): string => readLocal(VIEW_RECORD_PREFIX + viewId) ?? '';
+
+export const writeViewRecord = (viewId: string, recordId: string): void => writeLocal(VIEW_RECORD_PREFIX + viewId, recordId);
+
+const COLUMN_ORDER_PREFIX = 'sjp-column-order:';
+const COLUMN_WIDTH_PREFIX = 'sjp-column-width:';
+const COLUMN_PIN_PREFIX = 'sjp-column-pin:';
+
+/** How many leading columns stay frozen while scrolling sideways (default: the identifier column). */
+export const readColumnPin = (table: string): number => {
+  const value = Number(readLocal(COLUMN_PIN_PREFIX + table));
+  return Number.isInteger(value) && value >= 1 && value <= 6 ? value : 1;
+};
+export const writeColumnPin = (table: string, count: number): void => writeLocal(COLUMN_PIN_PREFIX + table, String(count));
+
+export const readColumnOrder = (table: string): string[] => readStringList(COLUMN_ORDER_PREFIX + table) ?? [];
+export const writeColumnOrder = (table: string, keys: string[]): void => writeStringList(COLUMN_ORDER_PREFIX + table, keys);
+
+export const readColumnWidths = (table: string): Record<string, number> => {
+  const raw = readLocal(COLUMN_WIDTH_PREFIX + table);
+  if (!raw) return {};
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === 'number' && Number.isFinite(value) && value >= 60 && value <= 800) out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+};
+
+export const writeColumnWidths = (table: string, widths: Record<string, number>): void =>
+  writeLocal(COLUMN_WIDTH_PREFIX + table, JSON.stringify(widths));
 
 export const DENSITY_KEY = 'sjp-density';
 
 export type Density = 'compact' | 'comfy';
 
-export const readDensity = (): Density => {
-  try {
-    return localStorage.getItem(DENSITY_KEY) === 'comfy' ? 'comfy' : 'compact';
-  } catch {
-    return 'compact';
-  }
-};
+export const readDensity = (): Density => readLocal(DENSITY_KEY) === 'comfy' ? 'comfy' : 'compact';
 
-export const writeDensity = (density: Density): void => {
-  try {
-    localStorage.setItem(DENSITY_KEY, density);
-  } catch {
-    /* storage can be disabled */
-  }
-};
+export const writeDensity = (density: Density): void => writeLocal(DENSITY_KEY, density);
 
 const DETAIL_NAV_PREFIX = 'sjp-detail-nav-';
 
@@ -147,18 +208,13 @@ const DETAIL_NAV_PREFIX = 'sjp-detail-nav-';
  * Remembers the visible order of a list (session-scoped) so the record detail
  * page can offer previous/next without another round trip.
  */
-export const writeDetailNav = (key: string, ids: string[]): void => {
-  try {
-    sessionStorage.setItem(DETAIL_NAV_PREFIX + key, JSON.stringify({ ids, at: Date.now() }));
-  } catch {
-    /* storage can be disabled */
-  }
-};
+export const writeDetailNav = (key: string, ids: string[]): void =>
+  writeSession(DETAIL_NAV_PREFIX + key, JSON.stringify({ ids, at: Date.now() }));
 
 export const readDetailNav = (key: string, maxAgeMs = 30 * 60_000): string[] | null => {
+  const raw = readSession(DETAIL_NAV_PREFIX + key);
+  if (!raw) return null;
   try {
-    const raw = sessionStorage.getItem(DETAIL_NAV_PREFIX + key);
-    if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
     const value = parsed as { ids?: unknown; at?: unknown };
@@ -174,9 +230,9 @@ export const readDetailNav = (key: string, maxAgeMs = 30 * 60_000): string[] | n
 const COLUMN_PREFIX = 'sjp-cols-';
 
 export const readColumnPrefs = (table: string): string[] => {
+  const raw = readLocal(COLUMN_PREFIX + table);
+  if (!raw) return [];
   try {
-    const raw = localStorage.getItem(COLUMN_PREFIX + table);
-    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === 'string') : [];
   } catch {
@@ -184,20 +240,15 @@ export const readColumnPrefs = (table: string): string[] => {
   }
 };
 
-export const writeColumnPrefs = (table: string, keys: string[]): void => {
-  try {
-    localStorage.setItem(COLUMN_PREFIX + table, JSON.stringify(keys));
-  } catch {
-    /* storage can be disabled */
-  }
-};
+export const writeColumnPrefs = (table: string, keys: string[]): void =>
+  writeLocal(COLUMN_PREFIX + table, JSON.stringify(keys));
 
 const VIEWS_PREFIX = 'sjp-views-';
 
 export const readTableViews = (table: string): unknown[] => {
+  const raw = readLocal(VIEWS_PREFIX + table);
+  if (!raw) return [];
   try {
-    const raw = localStorage.getItem(VIEWS_PREFIX + table);
-    if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : [];
   } catch {
@@ -205,10 +256,5 @@ export const readTableViews = (table: string): unknown[] => {
   }
 };
 
-export const writeTableViews = (table: string, views: unknown[]): void => {
-  try {
-    localStorage.setItem(VIEWS_PREFIX + table, JSON.stringify(views));
-  } catch {
-    /* storage can be disabled */
-  }
-};
+export const writeTableViews = (table: string, views: unknown[]): void =>
+  writeLocal(VIEWS_PREFIX + table, JSON.stringify(views));

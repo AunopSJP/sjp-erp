@@ -27,6 +27,18 @@ export interface RowColumn {
   required?: boolean;
 }
 
+export type OptionColor = 'gray' | 'red' | 'amber' | 'green' | 'blue';
+
+/** Stable option metadata: the id is stored in records, label/color are display only. */
+export interface OptionDef {
+  id: string;
+  label: string;
+  color?: OptionColor;
+  archived?: boolean;
+  /** Role ids allowed to pick this option; empty/undefined means every role. */
+  roles?: string[];
+}
+
 export interface FieldDef {
   key: string;
   label: string;
@@ -34,17 +46,80 @@ export interface FieldDef {
   required?: boolean;
   unique?: boolean;
   options?: string[];
+  optionMeta?: OptionDef[];
   optionsFrom?: 'teams' | 'depts';
   ref?: string;
+  /** Ref fields can hold several record ids (array) instead of one. */
+  multiple?: boolean;
+  /** Field on the target dataset used as the readable label in pickers and grids. */
+  displayField?: string;
   cols?: RowColumn[];
   hidden?: boolean;
   showIf?: { field: string; value: unknown };
   suffix?: string;
+  /** Number/money: allowed decimal places, range, and ISO 4217 currency code (display/unit only; never summed across currencies). */
+  decimals?: number;
+  min?: number;
+  max?: number;
+  currency?: string;
+  /** Text: maximum length. */
+  maxLength?: number;
   help?: string;
   wide?: boolean;
   readOnly?: boolean;
   sensitive?: boolean;
   formula?: string;
+  /** Hidden from forms/filters but keeps existing values (no data loss). */
+  archived?: boolean;
+  /** Reverse side of a relation: kept in sync from `entity`.`field`. */
+  mirror?: { entity: string; field: string };
+  /** Ref picker: only offer target records whose `targetField` equals this record's `by` value. */
+  optionFilter?: { by: string; targetField: string };
+}
+
+export interface FieldDefInput {
+  key?: string;
+  label?: string;
+  type?: string;
+  required?: boolean;
+  hidden?: boolean;
+  readOnly?: boolean;
+  sensitive?: boolean;
+  wide?: boolean;
+  help?: string;
+  suffix?: string;
+  decimals?: number;
+  min?: number;
+  max?: number;
+  currency?: string;
+  maxLength?: number;
+  ref?: string;
+  multiple?: boolean;
+  displayField?: string;
+  optionMeta?: { id?: string; label?: string; color?: string; archived?: boolean; roles?: string[] }[];
+  formula?: string;
+  options?: string[];
+  optionsFrom?: 'teams' | 'depts';
+  archived?: boolean;
+  mirror?: { entity?: string; field?: string };
+  optionFilter?: { by?: string; targetField?: string };
+  cols?: { key?: string; label?: string; type?: string; ref?: string; options?: string[]; required?: boolean }[];
+  showIf?: { field?: string; value?: unknown };
+}
+
+/** Client payload for a dataset; `fields` and `cols` are validated before use. */
+/** Draft and archived modules are hidden from operations: no meta, no direct link, no records. */
+export function isOperational(def: EntityDef): boolean {
+  if (!def.custom) return true;
+  return (def.status ?? 'published') === 'published';
+}
+
+export interface EntityInput extends Partial<Omit<EntityDef, 'key' | 'label' | 'fields' | 'cols' | 'filters'>> {
+  key: string;
+  label: string;
+  fields?: FieldDefInput[];
+  cols?: string[];
+  filters?: string[];
 }
 
 export interface EntityDef {
@@ -59,6 +134,8 @@ export interface EntityDef {
   scoped?: boolean;
   system?: boolean;
   custom?: boolean;
+  /** Lifecycle for custom modules; system modules are always operational. */
+  status?: 'draft' | 'published' | 'archived';
   /** Navigation group for custom modules, e.g. "งานบริการและโครงการ". */
   group?: string;
   /** Short label used by the sidebar; falls back to `label`. */
@@ -67,6 +144,8 @@ export interface EntityDef {
   icon?: string;
   /** Short description shown in the module builder. */
   description?: string;
+  /** Admin-editable search terms (nicknames, English/Thai variants). */
+  aliases?: string[];
 }
 
 export interface WorkflowStatus {
@@ -103,6 +182,8 @@ export interface ProjectStepDef {
   approverRole?: string;
   approverUser?: string;
   source?: string;
+  /** When set, the step only appears for these project tracks (e.g. R&D). */
+  tracks?: string[];
 }
 
 const f = (key: string, label: string, type: FieldType = 'text', extra: Partial<FieldDef> = {}): FieldDef => ({
@@ -415,7 +496,105 @@ export const projectSteps = (): ProjectStepDef[] => [
     ],
     [D('svc_contract', 'สัญญาบริการ')],
   ),
+  S(
+    'removal',
+    '14. ถอด/เลิกติดตั้ง (เมื่อเลิกสัญญา)',
+    'ใช้เมื่อสิ้นสุดสัญญาหรือลูกค้ายกเลิก — บันทึกการถอดอุปกรณ์ การคืนของ และปิดโครงการ (ข้ามได้ถ้ายังใช้งานต่อ)',
+    [
+      f('removalDate', 'วันที่ถอด/เลิกติดตั้ง', 'date'),
+      sel('removalReason', 'เหตุผล', ['สิ้นสุดสัญญา', 'ลูกค้ายกเลิก', 'ย้ายสถานที่', 'อื่นๆ']),
+      f('removalNote', 'รายละเอียดการถอด/คืนอุปกรณ์', 'textarea'),
+    ],
+    [
+      D('removal_report', 'รายงานการถอดอุปกรณ์', { required: true }),
+      D('equipment_return', 'เอกสารคืนอุปกรณ์/หลักฐาน', { signoff: true }),
+    ],
+  ),
+  // ---------- R&D track (only shown when project.track = R&D) ----------
+  S(
+    'rnd_req',
+    '1. Requirement Card & Stakeholder',
+    'เก็บโจทย์ ปัญหา และผู้มีส่วนได้ส่วนเสียก่อนเริ่มพัฒนาผลิตภัณฑ์',
+    [
+      sel('rndSource', 'แหล่งที่มา', ['ลูกค้า', 'ภายใน', 'พาร์ตเนอร์']),
+      f('stakeholder', 'Stakeholder หลัก'),
+      f('problem', 'ปัญหาที่ต้องการแก้', 'textarea', { required: true }),
+      f('goal', 'เป้าหมาย/ผลลัพธ์', 'textarea'),
+    ],
+    [D('req_card', 'Requirement Card', { required: true }), D('stakeholder_note', 'Stakeholder Note')],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_design',
+    '2. แนวคิด/ทางเลือกการออกแบบ',
+    'Project Sketch, ทางเลือก และเหตุผลที่เลือก',
+    [f('options', 'ทางเลือกที่พิจารณา', 'textarea'), f('chosen', 'แนวทางที่เลือก')],
+    [D('sketch', 'Project Sketch Sheet'), D('options_doc', 'เอกสารทางเลือก')],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_proto',
+    '3. Prototype Design & Test',
+    'ออกแบบต้นแบบ ทดสอบ และบันทึกผล',
+    [f('protoScope', 'ขอบเขต Prototype'), f('protoResult', 'ผลทดสอบ', 'textarea')],
+    [D('proto_log', 'Prototype Design (Log)', { required: true }), D('test_summary', 'Test Summary Sheet')],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_poc',
+    '4. POC & Risk',
+    'ผล POC ข้อจำกัด และความเสี่ยงก่อนผลิตจริง',
+    [sel('pocResult', 'ผล POC', ['ผ่าน', 'ผ่านแบบมีเงื่อนไข', 'ไม่ผ่าน']), f('riskNote', 'ความเสี่ยง/แนวทางลด', 'textarea')],
+    [D('poc_result', 'POC Result Form', { required: true }), D('risk_note', 'Risk Note')],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_diagram',
+    '5. Block/Network Diagram & Flowchart',
+    'ผังระบบ เครือข่าย และลำดับการทำงานของซอฟต์แวร์',
+    [],
+    [D('block_diagram', 'Block Diagram'), D('network_diagram', 'Network Diagram'), D('flowchart', 'Functional Flowchart')],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_docs',
+    '6. เอกสารสินค้า (BOM/Datasheet/Assembly/QC)',
+    'ชุดเอกสารพร้อมผลิตและขาย',
+    [],
+    [
+      D('bom', 'Bill of Material (BOM)'),
+      D('datasheet', 'Final Spec Sheet (Datasheet)', { required: true }),
+      D('assembly', 'Assembly Guide'),
+      D('qc_checklist', 'QC Checklist'),
+      D('testing_standard', 'Testing Standard'),
+    ],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_slide',
+    '7. Product Slide / Sales Pack',
+    'สื่อนำเสนอผลิตภัณฑ์สำหรับขาย/พาร์ตเนอร์',
+    [],
+    [D('product_slide', 'Product Slide')],
+    { tracks: ['R&D'] },
+  ),
+  S(
+    'rnd_signoff',
+    '8. Sign-off (ลูกค้า/พาร์ตเนอร์)',
+    'ยืนยันผลลัพธ์ก่อนส่งเข้า production/ขาย',
+    [f('signDate', 'วันที่ลงนาม', 'date'), f('signer', 'ผู้ลงนาม/หน่วยงาน')],
+    [D('signoff_doc', 'เอกสาร Sign-off', { required: true, signoff: true })],
+    { tracks: ['R&D'] },
+  ),
 ];
+
+/** Steps that apply to a project track; R&D uses its own pipeline. */
+export const projectStepsFor = (track?: string): ProjectStepDef[] => {
+  const value = String(track ?? '').trim() || 'มาตรฐาน';
+  return projectSteps().filter((step) =>
+    step.enabled && (value === 'R&D' ? step.tracks?.includes('R&D') : !step.tracks),
+  );
+};
 
 export const LISTS = {
   teams: ['ทีมโครงการ', 'ทีมบริการ/ซ่อมบำรุง', 'ทีมเครือข่าย', 'ศูนย์รับแจ้ง', 'ทีมคลัง/พัสดุ'],
@@ -646,7 +825,7 @@ export const ENTITY_DEFS: Record<string, EntityDef> = {
       f('receivedAt', 'วันเวลาที่รับเรื่อง', 'datetime', { required: true, help: 'ใช้คำนวณอายุเคสและเวลา SLA' }),
       f('customer', 'ลูกค้า', 'ref', { ref: 'customers', required: true }),
       f('project', 'โครงการ', 'ref', { ref: 'projects' }),
-      f('site', 'ไซต์', 'ref', { ref: 'sites', required: true, help: 'ต้องตรงกับไซต์ของลูกค้า ระบบจะตรวจให้' }),
+      f('site', 'ไซต์', 'ref', { ref: 'sites', required: true, optionFilter: { by: 'customer', targetField: 'customer' }, help: 'ต้องตรงกับไซต์ของลูกค้า ระบบจะตรวจให้' }),
       f('point', 'จุดติดตั้ง'),
       f('circuitNo', 'หมายเลขวงจร'),
       f('item', 'อุปกรณ์/รุ่น', 'ref', { ref: 'items' }),
@@ -877,6 +1056,28 @@ export const ENTITY_DEFS: Record<string, EntityDef> = {
       f('driver', 'พนักงานขับรถ', 'ref', { ref: 'users' }),
       f('status', 'สถานะการจอง', 'select', { options: ['รออนุมัติ', 'อนุมัติแล้ว', 'ไม่อนุมัติ', 'ยกเลิก', 'เสร็จสิ้น'], required: true }),
       f('note', 'รายละเอียดเพิ่มเติม', 'textarea'),
+    ],
+  },
+  revenueShares: {
+    key: 'revenueShares',
+    label: 'แบ่งรายได้ (Ledger)',
+    resource: 'accounting',
+    prefix: 'REV',
+    title: 'code',
+    cols: ['code', 'project', 'period', 'partner', 'gross', 'sjpShare', 'partnerShare', 'status'],
+    filters: ['partner', 'status'],
+    scoped: true,
+    fields: [
+      f('project', 'โครงการ', 'ref', { ref: 'projects', required: true }),
+      f('period', 'งวด (YYYY-MM)', 'text', { required: true, help: 'ระบุเดือนที่รับรู้รายได้ เช่น 2026-11' }),
+      f('partner', 'คู่สัญญา/พาร์ตเนอร์', 'select', { options: ['SJP', 'NT', 'อื่นๆ'] }),
+      f('gross', 'ยอดรับรู้รายได้', 'number', { required: true }),
+      f('sjpShare', 'ส่วนของ SJP', 'number'),
+      f('partnerShare', 'ส่วนของพาร์ตเนอร์', 'number'),
+      f('status', 'สถานะ', 'select', { options: ['รอจ่าย', 'จ่ายแล้ว', 'ยกเลิก'], required: true }),
+      f('paidDate', 'วันที่จ่าย', 'date'),
+      f('note', 'หมายเหตุ', 'textarea'),
+      f('attachments', 'หลักฐาน', 'file'),
     ],
   },
 };

@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, OnInit, computed, inject, input, signal } from '@angular/core';
 import { ApiService, apiErrorMessage } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
 import { MetaService } from '../core/meta.service';
@@ -188,9 +188,22 @@ const FIELD_TYPES: [FieldType, string][] = [
               <span class="meta-editor-ic"><app-icon [name]="d.icon || 'doc'" [size]="20" /></span>
               <div class="meta-editor-title">
                 <h2>{{ d.label }}</h2>
-                <span>{{ d.prefix }} · {{ d.fields.length }} ฟิลด์ · {{ d.custom ? 'สร้างเอง' : (d.system ? 'โมดูลระบบ' : 'โมดูลมาตรฐาน') }}</span>
+                <span>{{ d.prefix }} · {{ d.fields.length }} ฟิลด์ · {{ d.custom ? 'สร้างเอง' : (d.system ? 'โมดูลระบบ' : 'โมดูลมาตรฐาน') }}
+                  @if (d.custom) { · <b class="badge {{ (d.status || 'published') === 'published' ? 'green' : (d.status === 'archived' ? 'gray' : 'amber') }}">{{ statusLabel(d) }}</b> }
+                </span>
               </div>
               <span class="grow"></span>
+              @if (d.custom && auth.can('settings','edit')) {
+                @if ((d.status || 'published') !== 'published') {
+                  <button type="button" class="btn sm primary" [disabled]="saving()" (click)="setModuleStatus('published')">เผยแพร่</button>
+                }
+                @if ((d.status || 'published') !== 'draft') {
+                  <button type="button" class="btn sm" [disabled]="saving()" (click)="setModuleStatus('draft')">ย้ายเป็นร่าง</button>
+                }
+                @if ((d.status || 'published') !== 'archived') {
+                  <button type="button" class="btn sm danger" [disabled]="saving()" (click)="setModuleStatus('archived')">เก็บถาวร</button>
+                }
+              }
               @if (d.custom) {
                 <button type="button" class="btn sm" (click)="duplicateModule()">ทำสำเนา</button>
                 <button type="button" class="btn sm" (click)="exportModule()">ส่งออก</button>
@@ -241,6 +254,11 @@ const FIELD_TYPES: [FieldType, string][] = [
                       </select>
                     </div>
                     <div class="field wide"><label for="lf-metadata-editor-component-7">คำอธิบาย</label><input id="lf-metadata-editor-component-7" [value]="d.description || ''" (input)="set('description', $any($event.target).value)" placeholder="อธิบายว่าโมดูลนี้ใช้ทำอะไร" /></div>
+                    <div class="field wide">
+                      <label for="lf-metadata-editor-component-7b">คำค้นเพิ่มเติม (alias) — คั่นด้วย ,</label>
+                      <input id="lf-metadata-editor-component-7b" [value]="(d.aliases || []).join(', ')" (input)="setAliases($any($event.target).value)" placeholder="เช่น ใบสั่งซื้อ, PO, purchase order" />
+                      <div class="muted small">ใช้ค้นหาใน App Launcher และช่องค้นหาระบบ; เว้นว่างได้</div>
+                    </div>
                     <label class="meta-toggle wide">
                       <input type="checkbox" [checked]="!!d.scoped" (change)="set('scoped', $any($event.target).checked)" />
                       <span><b>จำกัดข้อมูลตาม scope</b><small>ผู้ใช้เห็นเฉพาะข้อมูลที่ได้รับสิทธิ์</small></span>
@@ -416,6 +434,13 @@ const FIELD_TYPES: [FieldType, string][] = [
             </select>
           </div>
           <div class="field">
+            <label for="lf-metadata-editor-component-16b">สถานะเมื่อสร้าง</label>
+            <select id="lf-metadata-editor-component-16b" [value]="newStatus()" (change)="newStatus.set($any($event.target).value)">
+              <option value="draft" [selected]="newStatus() === 'draft'">ร่าง (ซ่อนจากเมนูจนเผยแพร่)</option>
+              <option value="published" [selected]="newStatus() === 'published'">เผยแพร่ทันที</option>
+            </select>
+          </div>
+          <div class="field">
             <label for="lf-metadata-editor-component-16">ไอคอนเมนู</label>
             <select id="lf-metadata-editor-component-16" [value]="newModule().icon" (change)="setNew('icon', $any($event.target).value)">
               @for (icon of moduleIcons; track icon[0]) { <option [value]="icon[0]" [selected]="icon[0] === newModule().icon">{{ icon[1] }}</option> }
@@ -507,6 +532,7 @@ export class MetadataEditorComponent implements OnInit {
   readonly saving = signal(false);
   readonly draftMessage = signal('');
   readonly roles = signal<RoleRow[]>([]);
+  readonly startCreating = input(false);
   readonly newOpen = signal(false);
   readonly newBusy = signal(false);
   readonly newError = signal('');
@@ -519,6 +545,7 @@ export class MetadataEditorComponent implements OnInit {
   readonly moduleIcons = MODULE_ICONS;
   readonly moduleTemplates = MODULE_TEMPLATES;
   readonly newTemplateInfo = computed(() => this.moduleTemplates.find((template) => template.key === this.newTemplate()) ?? this.moduleTemplates[0]);
+  readonly newStatus = signal<'draft' | 'published'>('draft');
   readonly teams = signal('');
   readonly depts = signal('');
   readonly fieldTypes = FIELD_TYPES;
@@ -587,6 +614,7 @@ export class MetadataEditorComponent implements OnInit {
   ngOnInit(): void {
     this.load();
     this.loadRoles();
+    if (this.startCreating() && this.auth.can('settings', 'edit')) this.openCreate();
   }
 
   private loadRoles(): void {
@@ -656,6 +684,15 @@ export class MetadataEditorComponent implements OnInit {
 
   set(key: keyof EntityDef, value: unknown): void {
     this.draft.update((draft) => (draft ? { ...draft, [key]: value } : draft));
+  }
+
+  setAliases(value: string): void {
+    const aliases = value
+      .split(/[,\n]/)
+      .map((item) => item.trim().replace(/\s+/g, ' '))
+      .filter(Boolean)
+      .slice(0, 20);
+    this.set('aliases', [...new Set(aliases)]);
   }
 
   setField(index: number, key: keyof FieldDef, value: unknown): void {
@@ -934,16 +971,62 @@ export class MetadataEditorComponent implements OnInit {
     if (!draft || this.saving() || this.readOnly()) return;
     this.saving.set(true);
     this.draftMessage.set('');
-    const body = draft.custom && this.roles().length
-      ? { ...draft, roleIds: this.draftRoleIds() }
-      : draft;
-    this.api.put<EntityDef>(`/meta/entity/${draft.key}`, body).subscribe({
+    this.api.put<EntityDef>(`/meta/entity/${draft.key}`, this.modulePayload(draft)).subscribe({
       next: () => {
         this.saving.set(false);
         this.toast.show('บันทึกโครงสร้างโมดูลแล้ว');
         this.meta.clearOptions();
         this.meta.load(true);
         this.loadRoles();
+        this.load();
+      },
+      error: (error: unknown) => {
+        this.saving.set(false);
+        this.draftMessage.set(apiErrorMessage(error));
+      },
+    });
+  }
+
+  /** `/meta/config` adds derived keys such as `workflowKey`; the DTO rejects unknown properties. */
+  private modulePayload(draft: EntityDef, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      key: draft.key,
+      label: draft.label,
+      prefix: draft.prefix,
+      title: draft.title,
+      cols: draft.cols,
+      filters: draft.filters,
+      fields: draft.fields,
+      scoped: draft.scoped,
+      custom: draft.custom,
+      group: draft.group,
+      navLabel: draft.navLabel,
+      icon: draft.icon,
+      description: draft.description,
+      aliases: draft.aliases,
+      status: draft.status,
+      ...(draft.custom && this.roles().length ? { roleIds: this.draftRoleIds() } : {}),
+      ...extra,
+    };
+  }
+
+  statusLabel(entity: EntityDef): string {
+    const status = entity.status ?? 'published';
+    return status === 'draft' ? 'ร่าง' : status === 'archived' ? 'เก็บถาวร' : 'เผยแพร่';
+  }
+
+  /** Lifecycle switches save the current structure with only `status` changed. */
+  setModuleStatus(status: 'draft' | 'published' | 'archived'): void {
+    const draft = this.draft();
+    if (!draft?.custom || this.saving()) return;
+    this.saving.set(true);
+    this.draftMessage.set('');
+    this.api.put<EntityDef>(`/meta/entity/${draft.key}`, this.modulePayload(draft, { status })).subscribe({
+      next: () => {
+        this.saving.set(false);
+        this.toast.show(`ตั้งสถานะโมดูลเป็น “${status === 'draft' ? 'ร่าง' : status === 'archived' ? 'เก็บถาวร' : 'เผยแพร่'}” แล้ว`);
+        this.meta.clearOptions();
+        this.meta.load(true);
         this.load();
       },
       error: (error: unknown) => {
@@ -969,6 +1052,7 @@ export class MetadataEditorComponent implements OnInit {
 
   openCreate(): void {
     this.newTemplate.set('blank');
+    this.newStatus.set('draft');
     this.newFieldsOverride.set(null);
     this.newModule.set({ label: '', key: '', prefix: 'DOC', group: '', navLabel: '', icon: 'puzzle', description: '' });
     this.newRoleIds.set([]);
@@ -1085,6 +1169,7 @@ export class MetadataEditorComponent implements OnInit {
       navLabel: module.navLabel,
       icon: module.icon,
       description: module.description,
+      status: this.newStatus(),
       ...(this.roles().length ? { roleIds: this.newRoleIds() } : {}),
     };
     this.api.post<EntityDef>('/meta/entities', body).subscribe({

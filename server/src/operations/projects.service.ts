@@ -4,7 +4,7 @@ import { ApprovalStoreService } from '../common/approvals.service.js';
 import { CompanyService } from '../common/company.service.js';
 import { nowIso, todayStr } from '../common/dates.js';
 import { bad } from '../common/exceptions.js';
-import { projectSteps, WORKFLOWS, type ProjectStepDef } from '../meta/entities.js';
+import { projectSteps, projectStepsFor, WORKFLOWS, type ProjectStepDef } from '../meta/entities.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { RecordsService } from '../records/records.service.js';
 
@@ -157,7 +157,7 @@ export class ProjectsService {
       }
       const next = this.current(user, { ...rec, steps } as Record<string, unknown>);
       if (next?.key === key) {
-        const order = projectSteps().filter((s) => s.enabled);
+        const order = projectStepsFor(String(rec['track'] ?? ''));
         const index = order.findIndex((s) => s.key === key);
         const following = order[index + 1];
         if (following && steps[following.key].status === 'pending') {
@@ -256,12 +256,12 @@ export class ProjectsService {
   }
 
   private step(rec: Record<string, unknown>, key: string): ProjectStepDef | undefined {
-    return projectSteps().find((s) => s.key === key && s.enabled);
+    return projectStepsFor(String(rec['track'] ?? '')).find((s) => s.key === key);
   }
 
   private current(user: SafeUser, rec: Record<string, unknown>): { key: string; label: string } | null {
     const steps = this.steps(rec);
-    const step = WORKFLOWS.project.steps.find((s) => s.enabled && !['done', 'skipped'].includes(steps[s.key]?.status ?? 'pending'));
+    const step = projectStepsFor(String(rec['track'] ?? '')).find((s) => !['done', 'skipped'].includes(steps[s.key]?.status ?? 'pending'));
     void user;
     return step ? { key: step.key, label: step.label } : null;
   }

@@ -18,12 +18,12 @@ import type { FieldDef, Option } from '../core/models';
         @if (field.help) { <div class="muted small" style="margin-top:-3px">{{ field.help }}</div> }
         @switch (field.type) {
           @case ('textarea') {
-            <textarea [id]="'f-' + field.key" rows="3" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitText($event)"></textarea>
+            <textarea [id]="'f-' + field.key" rows="3" [attr.maxlength]="field.maxLength ?? null" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitText($event)"></textarea>
           }
           @case ('number') {
             <div class="with-suffix">
-              <input [id]="'f-' + field.key" type="number" inputMode="decimal" step="any" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitText($event)" />
-              @if (field.suffix) { <span>{{ field.suffix }}</span> }
+              <input [id]="'f-' + field.key" type="number" inputMode="decimal" [attr.step]="numberStep()" [attr.min]="field.min ?? null" [attr.max]="field.max ?? null" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitText($event)" />
+              @if (field.currency || field.suffix) { <span>{{ field.currency || field.suffix }}</span> }
             </div>
           }
           @case ('date') {
@@ -31,6 +31,7 @@ import type { FieldDef, Option } from '../core/models';
           }
           @case ('datetime') {
             <input [id]="'f-' + field.key" type="datetime-local" [value]="toLocal(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitDateTime($event)" />
+            <div class="muted small">โซนเวลา {{ timeZone }} — เก็บเป็น UTC แสดงตามโซนนี้</div>
           }
           @case ('select') {
             <select [id]="'f-' + field.key" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (change)="emitText($event)">
@@ -40,11 +41,28 @@ import type { FieldDef, Option } from '../core/models';
             </select>
           }
           @case ('ref') {
-            <select [id]="'f-' + field.key" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (change)="emitText($event)">
-              <option value="" [selected]="!asText(value)">– เลือก –</option>
-              @for (option of options; track option.value) { <option [value]="option.value" [selected]="option.value === asText(value)">{{ option.label }}</option> }
-              @if (value && !hasOption(asText(value))) { <option [value]="asText(value)" [selected]="true">(ไม่พบ/ไม่มีสิทธิ์ดู)</option> }
-            </select>
+            @if (field.multiple) {
+              <div class="ref-multi">
+                <input type="search" [value]="refQuery" [disabled]="disabled" (input)="onRefQuery($event)"
+                  placeholder="ค้นหารายการที่เชื่อมโยง…" aria-label="ค้นหารายการที่เชื่อมโยง" />
+                <div class="ref-list" role="group" [attr.aria-label]="field.label">
+                  @for (option of filteredRefOptions(); track option.value) {
+                    <label class="check">
+                      <input type="checkbox" [checked]="isMultiChecked(option.value)" [disabled]="disabled" (change)="toggleMulti(option.value, $event)" />
+                      {{ option.label }}
+                    </label>
+                  }
+                  @if (!filteredRefOptions().length) { <span class="muted small">ไม่พบรายการที่ตรงกับคำค้น</span> }
+                </div>
+                <div class="muted small">เชื่อมแล้ว {{ multiCount() }} รายการ (สูงสุด 50)</div>
+              </div>
+            } @else {
+              <select [id]="'f-' + field.key" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (change)="emitText($event)">
+                <option value="" [selected]="!asText(value)">– เลือก –</option>
+                @for (option of options; track option.value) { <option [value]="option.value" [selected]="option.value === asText(value)">{{ option.label }}</option> }
+                @if (value && !hasOption(asText(value))) { <option [value]="asText(value)" [selected]="true">(ไม่พบ/ไม่มีสิทธิ์ดู)</option> }
+              </select>
+            }
             @if (!disabled && !options.length) {
               <div class="muted small field-hint">
                 ยังไม่มีข้อมูล{{ refLabel() ? ' “' + refLabel() + '”' : '' }} ให้เลือก — เพิ่ม{{ refLabel() ? 'ที่เมนู “' + refLabel() + '” ก่อน' : 'ข้อมูลหลักก่อน' }} แล้วกลับมาเลือก
@@ -52,12 +70,20 @@ import type { FieldDef, Option } from '../core/models';
             }
           }
           @case ('boolean') {
-            <label class="check"><input [id]="'f-' + field.key" type="checkbox" [checked]="!!value" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" (change)="emitBoolean($event)" /> ใช่</label>
+            @if (field.required) {
+              <label class="check"><input [id]="'f-' + field.key" type="checkbox" [checked]="!!value" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" (change)="emitBoolean($event)" /> ใช่</label>
+            } @else {
+              <select [id]="'f-' + field.key" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" (change)="emitTriState($event)">
+                <option value="" [selected]="triValue() === ''">ยังไม่กำหนด</option>
+                <option value="1" [selected]="triValue() === '1'">ใช่</option>
+                <option value="0" [selected]="triValue() === '0'">ไม่</option>
+              </select>
+            }
           }
           @case ('multiselect') {
             <div class="row">
               @for (option of options; track option.value) {
-                <label class="check"><input type="checkbox" [checked]="isMultiChecked(option.value)" [disabled]="disabled" (change)="toggleMulti(option.value, $event)" /> {{ option.label }}</label>
+                <label class="check"><input type="checkbox" [checked]="isMultiChecked(option.value)" [disabled]="disabled" (change)="toggleMulti(option.value, $event)" /> <span class="color-dot {{ option.color || 'gray' }}" aria-hidden="true"></span> {{ option.label }}</label>
               }
             </div>
           }
@@ -117,13 +143,20 @@ import type { FieldDef, Option } from '../core/models';
             </div>
           }
           @default {
-            <input [id]="'f-' + field.key" [type]="field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitText($event)" />
+            <input [id]="'f-' + field.key" [type]="field.type === 'email' ? 'email' : field.type === 'phone' ? 'tel' : 'text'" [attr.maxlength]="field.maxLength ?? null" [value]="asText(value)" [disabled]="disabled" [attr.aria-invalid]="error ? 'true' : null" [attr.aria-describedby]="error ? 'err-' + field.key : null" [attr.aria-required]="field.required ? 'true' : null" (input)="emitText($event)" />
           }
         }
         @if (error) { <div class="err" [id]="'err-' + field.key" role="alert">{{ error }}</div> }
       </div>
     }
   `,
+  styles: [`
+    .ref-multi { display: grid; gap: 6px; }
+    .ref-list { display: grid; gap: 4px; max-height: 220px; overflow: auto; padding: 6px; border: 1px solid var(--line); border-radius: 8px; }
+    .color-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+    .color-dot.red { background: #c62828; } .color-dot.amber { background: #b26a00; }
+    .color-dot.green { background: #2e7d32; } .color-dot.blue { background: #1565c0; }
+  `],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class FieldComponent {
@@ -170,6 +203,21 @@ export class FieldComponent {
     return this.options.some((option) => option.value === value);
   }
 
+  refQuery = '';
+
+  onRefQuery(event: Event): void {
+    this.refQuery = event.target instanceof HTMLInputElement ? event.target.value : '';
+  }
+
+  filteredRefOptions(): Option[] {
+    const query = this.refQuery.trim().toLowerCase();
+    return query ? this.options.filter((option) => option.label.toLowerCase().includes(query)) : this.options;
+  }
+
+  multiCount(): number {
+    return Array.isArray(this.value) ? (this.value as string[]).length : 0;
+  }
+
   emitText(event: Event): void {
     this.valueChange.emit((event.target as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement).value);
   }
@@ -177,6 +225,21 @@ export class FieldComponent {
   emitDateTime(event: Event): void {
     const value = (event.target as HTMLInputElement).value;
     this.valueChange.emit(value ? new Date(value).toISOString() : '');
+  }
+
+  readonly timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  numberStep(): string {
+    return this.field.decimals !== undefined ? String(10 ** -this.field.decimals) : 'any';
+  }
+
+  triValue(): string {
+    return this.value === undefined || this.value === null || this.value === '' ? '' : this.value ? '1' : '0';
+  }
+
+  emitTriState(event: Event): void {
+    const raw = (event.target as HTMLSelectElement).value;
+    this.valueChange.emit(raw === '' ? '' : raw === '1');
   }
 
   emitBoolean(event: Event): void {
@@ -266,6 +329,8 @@ export class DynamicFieldsComponent implements OnChanges {
   @Output() valuesChange = new EventEmitter<Record<string, unknown>>();
 
   readonly options = new Map<string, Option[]>();
+  private readonly optionToken = new Map<string, number>();
+  private readonly lastFilter = new Map<string, string>();
   private latest: Record<string, unknown> = {};
 
   constructor(
@@ -274,13 +339,21 @@ export class DynamicFieldsComponent implements OnChanges {
   ) {}
 
   ngOnChanges(changes: SimpleChanges): void {
-    if (changes['values']) this.latest = this.values ?? {};
+    if (changes['values']) {
+      this.latest = this.values ?? {};
+      for (const field of this.fields) {
+        if (field.type === 'ref' && field.ref && field.optionFilter) {
+          const parent = String(this.values[field.optionFilter.by] ?? '');
+          if (this.lastFilter.get(field.key) !== parent) this.loadRefOptions(field);
+        }
+      }
+    }
     if (changes['fields'] || changes['lists']) this.loadOptions();
   }
 
   visibleFields(): FieldDef[] {
     return this.fields.filter(
-      (field) => !field.hidden && (!field.showIf || this.values[field.showIf.field] === field.showIf.value),
+      (field) => !field.hidden && !field.archived && (!field.showIf || this.values[field.showIf.field] === field.showIf.value),
     );
   }
 
@@ -295,7 +368,11 @@ export class DynamicFieldsComponent implements OnChanges {
     if (field.type === 'select' || field.type === 'multiselect') {
       if (field.optionsFrom === 'teams') return this.lists.teams.map((value) => ({ value, label: value }));
       if (field.optionsFrom === 'depts') return this.lists.depts.map((value) => ({ value, label: value }));
-      return (field.options ?? []).map((value) => ({ value, label: value }));
+      const meta = new Map((field.optionMeta ?? []).map((option) => [option.id, option]));
+      return (field.options ?? []).map((value) => {
+        const option = meta.get(value);
+        return { value, label: option?.label ?? value, color: option?.color, archived: option?.archived };
+      }).filter((option) => !option.archived);
     }
     return this.options.get(field.key) ?? [];
   }
@@ -308,17 +385,31 @@ export class DynamicFieldsComponent implements OnChanges {
     return out;
   }
 
+  private loadRefOptions(field: FieldDef): void {
+    if (!field.ref) return;
+    const parent = field.optionFilter ? String(this.values[field.optionFilter.by] ?? '') : '';
+    this.lastFilter.set(field.key, parent);
+    if (!this.options.has(field.key)) this.options.set(field.key, []);
+    const token = (this.optionToken.get(field.key) ?? 0) + 1;
+    this.optionToken.set(field.key, token);
+    this.meta
+      .options(field.ref, field.optionFilter && parent ? { field: field.optionFilter.targetField, value: parent } : undefined)
+      .subscribe({
+        next: (options) => {
+          if (this.optionToken.get(field.key) !== token) return;
+          this.options.set(field.key, options);
+          this.cdr.markForCheck();
+        },
+        error: () => {
+          if (this.optionToken.get(field.key) === token) this.cdr.markForCheck();
+        },
+      });
+  }
+
   private loadOptions(): void {
     for (const field of this.fields) {
-      if (field.type === 'ref' && field.ref && !this.options.has(field.key)) {
-        this.options.set(field.key, []);
-        this.meta.options(field.ref).subscribe({
-          next: (options) => {
-            this.options.set(field.key, options);
-            this.cdr.markForCheck();
-          },
-          error: () => this.cdr.markForCheck(),
-        });
+      if (field.type === 'ref' && field.ref) {
+        this.loadRefOptions(field);
       }
       if (field.type === 'rows') {
         for (const col of field.cols ?? []) {

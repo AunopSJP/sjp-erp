@@ -24,6 +24,17 @@ const escapeHtml = (value: unknown): string =>
 
 const isMoney = (key: string): boolean => /amount|total|subtotal|vat|price|cost|salary/i.test(key);
 
+/** ข้อมูลขั้นต่ำของรายงานที่ต้องการแปลงเป็น PDF */
+export interface ReportPdfInput {
+  title: string;
+  subtitle?: string;
+  columns: { label: string; align?: 'left' | 'right' }[];
+  rows: string[][];
+  summary?: { label: string; value: string }[];
+  filename: string;
+  userName: string;
+}
+
 const num = (value: unknown): string => {
   const n = Number(value);
   if (!Number.isFinite(n)) return escapeHtml(value);
@@ -59,6 +70,17 @@ export class PdfService {
     const def = this.access.requireEntity(user, entityKey, 'view');
     const record = this.records.get(user, entityKey, id);
     const html = this.html(def, record as Record<string, unknown>, user);
+    const safeCode = String(record.code ?? id).replace(/[^A-Za-z0-9._-]/g, '_');
+    return this.renderHtml(html, `${safeCode}.pdf`);
+  }
+
+  /** สร้าง PDF จากรายงานตาราง (ใช้ร่วมกับรายงานบริการ/ส่วนแบ่งรายได้) */
+  async renderReport(input: ReportPdfInput): Promise<{ buffer: Buffer; filename: string }> {
+    return this.renderHtml(this.reportHtml(input), input.filename);
+  }
+
+  /** เรียก headless browser หนึ่งครั้งเพื่อพิมพ์ HTML เป็น PDF */
+  private async renderHtml(html: string, filename: string): Promise<{ buffer: Buffer; filename: string }> {
     const dir = mkdtempSync(join(tmpdir(), 'sjp-pdf-'));
     const htmlPath = join(dir, 'document.html');
     const pdfPath = join(dir, 'document.pdf');
@@ -82,8 +104,7 @@ export class PdfService {
       ], { timeout: 45000, windowsHide: true });
       if (!existsSync(pdfPath)) throw new ServiceUnavailableException('สร้าง PDF ไม่สำเร็จ');
       const buffer = readFileSync(pdfPath);
-      const safeCode = String(record.code ?? id).replace(/[^A-Za-z0-9._-]/g, '_');
-      return { buffer, filename: `${safeCode}.pdf` };
+      return { buffer, filename };
     } finally {
       this.release();
       rmSync(dir, { recursive: true, force: true });
@@ -214,6 +235,72 @@ export class PdfService {
   </footer>
 </body>
 </html>`;
+  }
+
+  /** เทมเพลต PDF สำหรับรายงานแบบตาราง พร้อมหัวบริษัทและช่องลงนาม */
+  private reportHtml(input: ReportPdfInput): string {
+    const company = this.company.get();
+    const meta = [company.address, company.taxId ? `เลขประจำตัวผู้เสียภาษี ${company.taxId}` : '', company.phone, company.email, company.website]
+      .filter(Boolean)
+      .map((line) => escapeHtml(line))
+      .join('<br>');
+    const head = input.columns
+      .map((col) => `<th class="${col.align === 'right' ? 'right' : ''}">${escapeHtml(col.label)}</th>`)
+      .join('');
+    const body = input.rows.length
+      ? input.rows
+          .map(
+            (row) =>
+              `<tr>${row
+                .map((cell, index) => `<td class="${input.columns[index]?.align === 'right' ? 'right' : ''}">${escapeHtml(cell)}</td>`)
+                .join('')}</tr>`,
+          )
+          .join('')
+      : `<tr><td class="muted" colspan="${Math.max(1, input.columns.length)}">ไม่มีข้อมูลในช่วงเวลานี้</td></tr>`;
+    const summary = input.summary?.length
+      ? `<div class="summary">${input.summary
+          .map((item) => `<div><span>${escapeHtml(item.label)}</span><b>${escapeHtml(item.value)}</b></div>`)
+          .join('')}</div>`
+      : '';
+
+    return `<!doctype html>
+<html lang="th"><head><meta charset="utf-8" />
+<title>${escapeHtml(input.title)}</title>
+<style>
+  @page { size: A4 landscape; margin: 12mm 12mm 14mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: #1f2328; font-family: "Leelawadee UI", "Tahoma", "Segoe UI", sans-serif; font-size: 11px; line-height: 1.5; }
+  header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 2px solid #dc2f36; padding-bottom: 10px; margin-bottom: 14px; }
+  .brand { font-size: 20px; font-weight: 800; color: #dc2f36; }
+  .brand small { display: block; font-size: 9px; font-weight: 500; color: #6b6b6b; letter-spacing: 1px; }
+  .company-meta { flex: 1; text-align: center; font-size: 9px; color: #666; line-height: 1.5; }
+  .doc-title { text-align: right; }
+  .doc-title h1 { margin: 0 0 2px; font-size: 16px; }
+  .doc-title .sub { font-size: 10px; color: #555; }
+  .summary { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 10px; }
+  .summary div { border: 1px solid #e5ded8; background: #faf7f4; border-radius: 6px; padding: 6px 10px; min-width: 120px; }
+  .summary span { display: block; font-size: 9px; color: #777; }
+  .summary b { font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #faf7f4; text-align: left; font-weight: 600; padding: 5px 7px; border: 1px solid #ddd; }
+  td { padding: 5px 7px; border: 1px solid #e3e3e3; }
+  .right { text-align: right; font-variant-numeric: tabular-nums; }
+  .muted { color: #999; text-align: center; }
+  footer { margin-top: 18px; border-top: 1px solid #ddd; padding-top: 6px; display: flex; justify-content: space-between; color: #888; font-size: 9px; }
+</style></head><body>
+  <header>
+    <div class="brand">${escapeHtml(company.name)}<small>${escapeHtml(company.nameEn || 'SJP ERP')}</small></div>
+    <div class="company-meta">${meta}</div>
+    <div class="doc-title"><h1>${escapeHtml(input.title)}</h1>${input.subtitle ? `<div class="sub">${escapeHtml(input.subtitle)}</div>` : ''}</div>
+  </header>
+  ${summary}
+  <table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
+  ${company.footerNote ? `<div class="muted" style="text-align:left;margin-top:10px;font-size:9px">${escapeHtml(company.footerNote)}</div>` : ''}
+  <footer>
+    <span>สร้างโดย ${escapeHtml(input.userName)} · ${escapeHtml(fmtThaiDateTime(new Date().toISOString()))}</span>
+    <span>${escapeHtml(company.website || '')}</span>
+  </footer>
+</body></html>`;
   }
 
   private value(field: FieldDef, value: unknown, label: string | undefined, money: boolean): string {

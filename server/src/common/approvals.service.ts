@@ -7,6 +7,7 @@ import type { SafeUser } from '../auth/user.types.js';
 import { AccessService } from './access.service.js';
 import { EventsService } from '../events/events.service.js';
 import { nowIso } from './dates.js';
+import { currentWorkspaceId } from './workspace-context.js';
 import { notFound } from './exceptions.js';
 
 export type ApprovalRow = typeof approvals.$inferSelect;
@@ -46,7 +47,12 @@ export class ApprovalStoreService {
     const existing = this.db
       .select()
       .from(approvals)
-      .where(and(eq(approvals.status, 'pending'), eq(approvals.entity, input.entity), eq(approvals.recordId, input.recordId)))
+      .where(and(
+        eq(approvals.status, 'pending'),
+        eq(approvals.entity, input.entity),
+        eq(approvals.recordId, input.recordId),
+        eq(approvals.workspaceId, currentWorkspaceId()),
+      ))
       .all()
       .find((row) => row.kind === input.kind && row.key === input.key);
     if (existing) return this.decorate(existing);
@@ -64,6 +70,7 @@ export class ApprovalStoreService {
       payload: input.payload ?? {},
       cfg,
       note: '',
+      workspaceId: currentWorkspaceId(),
     };
     this.db.insert(approvals).values(row).run();
     this.events.publish({
@@ -81,13 +88,19 @@ export class ApprovalStoreService {
     return this.db
       .select()
       .from(approvals)
-      .where(and(eq(approvals.status, 'pending'), eq(approvals.entity, entity), eq(approvals.recordId, recordId)))
+      .where(and(
+        eq(approvals.status, 'pending'),
+        eq(approvals.entity, entity),
+        eq(approvals.recordId, recordId),
+        eq(approvals.workspaceId, currentWorkspaceId()),
+      ))
       .all()
       .map((row) => this.decorate(row));
   }
 
   listFor(user: SafeUser): { pending: ApprovalView[]; decided: ApprovalView[] } {
-    const rows = this.db.select().from(approvals).all();
+    const rows = this.db.select().from(approvals)
+      .where(eq(approvals.workspaceId, currentWorkspaceId())).all();
     const relevant = (row: ApprovalRow): boolean => {
       if (user.isAdmin) return true;
       if (row.by === user.id) return true;
@@ -108,7 +121,9 @@ export class ApprovalStoreService {
   }
 
   find(id: string): ApprovalRow | undefined {
-    return this.db.select().from(approvals).where(eq(approvals.id, id)).all()[0];
+    return this.db.select().from(approvals)
+      .where(and(eq(approvals.id, id), eq(approvals.workspaceId, currentWorkspaceId())))
+      .all()[0];
   }
 
   decide(row: ApprovalRow, user: SafeUser, approve: boolean, note: string): ApprovalView {

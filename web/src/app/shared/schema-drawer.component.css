@@ -1,0 +1,10 @@
+.schema-source { margin: 0 0 12px; }
+.schema-flags { display: grid; gap: 8px; margin: 14px 0; }
+.schema-existing { margin: 8px 0 14px; }
+.schema-existing summary { cursor: pointer; min-height: 32px; }
+.schema-existing ul { margin: 8px 0 0; padding-left: 18px; max-height: 220px; overflow: auto; }
+.schema-existing li { overflow-wrap: anywhere; }
+.option-table { display: grid; gap: 6px; margin-bottom: 6px; }
+.option-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.option-row input { min-width: 0; flex: 1 1 120px; }
+.option-row select { flex: 0 0 110px; }

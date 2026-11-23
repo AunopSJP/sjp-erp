@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import { authGuard, entityGuard, loginGuard, moduleGuard } from './core/guards';
+import { leaveWithPendingEdits } from './core/pending-edits.service';
 
 export const routes: Routes = [
   {
@@ -13,12 +14,13 @@ export const routes: Routes = [
     loadComponent: () => import('./shell/shell.component').then((m) => m.ShellComponent),
     children: [
       { path: '', loadComponent: () => import('./pages/dashboard.component').then((m) => m.DashboardComponent) },
+      { path: 'apps', loadComponent: () => import('./pages/app-launcher.component').then((m) => m.AppLauncherComponent) },
       { path: 'workspace', loadComponent: () => import('./pages/workspace.component').then((m) => m.WorkspaceComponent) },
       { path: 'my', loadComponent: () => import('./pages/my-work.component').then((m) => m.MyWorkComponent) },
       { path: 'account', loadComponent: () => import('./pages/account.component').then((m) => m.AccountComponent) },
       { path: 'approvals', loadComponent: () => import('./pages/approvals.component').then((m) => m.ApprovalsComponent) },
-      { path: 'entities/:entity', canActivate: [entityGuard], loadComponent: () => import('./pages/entity-list.component').then((m) => m.EntityListComponent) },
-      { path: 'entities/:entity/:id', canActivate: [entityGuard], loadComponent: () => import('./pages/entity-detail.component').then((m) => m.EntityDetailComponent) },
+      { path: 'entities/:entity', canActivate: [entityGuard], canDeactivate: [leaveWithPendingEdits], loadComponent: () => import('./pages/entity-list.component').then((m) => m.EntityListComponent) },
+      { path: 'entities/:entity/:id', canActivate: [entityGuard], canDeactivate: [leaveWithPendingEdits], loadComponent: () => import('./pages/entity-detail.component').then((m) => m.EntityDetailComponent) },
       {
         path: 'tickets',
         canActivate: [moduleGuard('tickets')],
@@ -53,11 +55,13 @@ export const routes: Routes = [
       {
         path: 'purchase-orders',
         canActivate: [moduleGuard('purchase')],
+        canDeactivate: [leaveWithPendingEdits],
         loadComponent: () => import('./pages/purchase.component').then((m) => m.PurchaseComponent),
       },
       {
         path: 'purchase-orders/:id',
         canActivate: [moduleGuard('purchase')],
+        canDeactivate: [leaveWithPendingEdits],
         loadComponent: () => import('./pages/purchase-detail.component').then((m) => m.PurchaseDetailComponent),
       },
       {

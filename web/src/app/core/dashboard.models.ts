@@ -6,6 +6,7 @@ export interface DashboardData {
   pm: { overdue: number; week: number };
   stock: { low: number; names: string[] };
   warranty: number;
+  contracts: { active: number; expiring: number; expired: number };
   pendingApprovals: number;
   finance: {
     invoices: { open: number; outstanding: number; overdue: number; overdueAmount: number; dueSoon: number };
@@ -48,6 +49,8 @@ export interface WorkspaceWidgetPosition {
   y: number;
   w: number;
   z?: number;
+  /** ความสูงที่จัดไว้ (px) — ใช้เมื่อจัดเรียงอัตโนมัติ/ลากปรับแถว */
+  h?: number;
 }
 
 export interface WorkspaceConfig {
@@ -55,4 +58,13 @@ export interface WorkspaceConfig {
   widgets: Partial<Record<WorkspaceWidgetKey, WorkspaceWidgetPosition>> & Record<string, WorkspaceWidgetPosition>;
   hidden: string[];
   updatedAt: string;
+  activeLayerId?: string;
+  layers?: WorkspaceLayer[];
+}
+
+export interface WorkspaceLayer {
+  id: string;
+  name: string;
+  widgets: Record<string, WorkspaceWidgetPosition>;
+  hidden: string[];
 }

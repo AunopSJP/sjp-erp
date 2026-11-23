@@ -189,7 +189,12 @@ export class ProjectDetailComponent implements OnInit {
   readonly openKey = signal('');
   readonly users = signal<{ value: string; label: string }[]>([]);
   readonly fields = computed(() => (this.meta.entity('projects')?.fields ?? []).filter((field) => !field.hidden));
-  readonly steps = computed(() => this.meta.projectSteps().filter((step) => step.enabled));
+  readonly steps = computed(() => {
+    const track = String(this.project()?.['track'] ?? '').trim() || 'มาตรฐาน';
+    return this.meta.projectSteps().filter((step) =>
+      step.enabled && (track === 'R&D' ? step.tracks?.includes('R&D') : !step.tracks),
+    );
+  });
   readonly fmtDate = fmtDate;
   readonly fmtDateTime = fmtDateTime;
   readonly Math = Math;

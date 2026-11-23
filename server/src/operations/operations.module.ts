@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { RecordsModule } from '../records/records.module.js';
+import { PdfModule } from '../pdf/pdf.module.js';
 import { AccountingController } from './accounting.controller.js';
 import { AccountingService } from './accounting.service.js';
 import { ApprovalDecisionService } from './approval-decision.service.js';
@@ -25,7 +26,7 @@ import { StockService } from './stock.service.js';
 import { TicketsService } from './tickets.service.js';
 
 @Module({
-  imports: [RecordsModule],
+  imports: [RecordsModule, PdfModule],
   controllers: [
     TicketsController,
     ProjectsController,

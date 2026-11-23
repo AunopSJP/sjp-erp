@@ -1,18 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { RecordsService } from './records.service.js';
 
-function parseFilters(raw: unknown): Record<string, string> {
-  if (!raw) return {};
-  if (typeof raw === 'object') return raw as Record<string, string>;
-  try {
-    const parsed = JSON.parse(String(raw));
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, string>) : {};
-  } catch {
-    return {};
-  }
-}
+import { parseListQuery } from './list-query.js';
 
 @Controller('records')
 export class RecordsController {
@@ -20,13 +11,7 @@ export class RecordsController {
 
   @Get(':entity')
   list(@CurrentUser() user: SafeUser, @Param('entity') entity: string, @Query() query: Record<string, string>) {
-    return this.records.list(user, entity, {
-      search: query['search'],
-      page: query['page'],
-      pageSize: query['pageSize'],
-      sort: query['sort'],
-      filters: parseFilters(query['filters']),
-    });
+    return this.records.list(user, entity, parseListQuery(query));
   }
 
   @Post(':entity')
@@ -60,7 +45,11 @@ export class RecordsController {
     @Param('id') id: string,
     @Body() body: Record<string, unknown>,
   ) {
-    return this.records.update(user, entity, id, body ?? {});
+    const { _expectedUpdatedAt: expectedUpdatedAt, ...changes } = body ?? {};
+    if (expectedUpdatedAt !== undefined && (
+      typeof expectedUpdatedAt !== 'string' || !Number.isFinite(Date.parse(expectedUpdatedAt))
+    )) throw new BadRequestException('เวอร์ชันรายการไม่ถูกต้อง');
+    return this.records.update(user, entity, id, changes, { expectedUpdatedAt });
   }
 
   @Delete(':entity/:id')

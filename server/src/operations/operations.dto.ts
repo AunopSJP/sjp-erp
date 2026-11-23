@@ -40,11 +40,15 @@ export class ProjectCreateDto {
   @IsOptional() @IsString() @MaxLength(240) name?: string;
   @IsOptional() @IsString() customer?: string;
   @IsOptional() @IsString() @MaxLength(80) type?: string;
+  @IsOptional() @IsString() @MaxLength(60) track?: string;
   @IsOptional() @IsString() site?: string;
   @IsOptional() @IsString() manager?: string;
   @IsOptional() @IsString() @MaxLength(120) team?: string;
   @IsOptional() @IsString() @MaxLength(120) contractNo?: string;
   @IsOptional() @IsString() @MaxLength(120) poNo?: string;
+  @IsOptional() @IsString() @MaxLength(40) contractStart?: string;
+  @IsOptional() @IsString() @MaxLength(40) contractEnd?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() sharePercent?: number;
   @IsOptional() @Type(() => Number) @IsNumber() value?: number;
   @Allow() boq?: unknown;
   @IsOptional() @IsString() @MaxLength(10000) note?: string;

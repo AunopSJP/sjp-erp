@@ -32,11 +32,11 @@ import type { ListResponse, RecordRow } from '../core/models';
       </div>
 
       @if (tab() === 'jobs') {
-        <app-data-table [columns]="jobColumns()" [rows]="jobs()" [tabs]="jobTabs" [exportName]="'pm-jobs'" [canExport]="auth.can('pm','export')" [emptyText]="'ยังไม่มีงาน PM ที่คุณเข้าถึงได้ — ตรวจสอบทีม/ผู้รับผิดชอบในแผน แล้วกด “สร้างงานตามรอบ”'" [error]="loadError()" [rowClass]="jobRowClass" (rowClick)="openJob($event)" (retry)="load()" />
+        <app-data-table [columns]="jobColumns()" [rows]="jobs()" [tabs]="jobTabs" [exportName]="'pm-jobs'" [viewsEntity]="'pmRecords'" [canShareViews]="auth.can('settings', 'edit')" [canExport]="auth.can('pm','export')" [emptyText]="'ยังไม่มีงาน PM ที่คุณเข้าถึงได้ — ตรวจสอบทีม/ผู้รับผิดชอบในแผน แล้วกด “สร้างงานตามรอบ”'" [error]="loadError()" [rowClass]="jobRowClass" (rowClick)="openJob($event)" (retry)="load()" />
       }
 
       @if (tab() === 'plans') {
-        <app-data-table [columns]="planColumns()" [rows]="plans()" [exportName]="'pm-plans'" [canExport]="auth.can('pm','export')" [emptyText]="'ยังไม่มีแผน PM'" [error]="loadError()" [rowClass]="rowClass" (rowClick)="editPlan($event)" (retry)="load()" />
+        <app-data-table [columns]="planColumns()" [rows]="plans()" [exportName]="'pm-plans'" [viewsEntity]="'pmPlans'" [canShareViews]="auth.can('settings', 'edit')" [canExport]="auth.can('pm','export')" [emptyText]="'ยังไม่มีแผน PM'" [error]="loadError()" [rowClass]="rowClass" (rowClick)="editPlan($event)" (retry)="load()" />
       }
 
       @if (tab() === 'tpl') {

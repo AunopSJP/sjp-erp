@@ -79,9 +79,12 @@ Font: IBM Plex Sans Thai (already bundled). Line-height 1.5 for Thai; never clip
 - **User menu**: account link, module switcher (favourites first, otherwise one entry per module group, max 5), theme/density controls, sign out.
 - **Record detail**: tabbed (`ข้อมูล` / `รายการที่เชื่อมโยง (n)` / `ประวัติการแก้ไข (n)`), definition list shows `field.help` under the value; on ≤760px a touch swipe moves between tabs (ignores tables, tabs and form controls). The header shows `‹ n/total ›` to walk the list order the user came from (session-scoped, 30 min) — same control on tickets and projects.
 - **Project government track**: choosing `track = ราชการ (ประมูล)` shows a gate card (value vs threshold, defended ICT, NT/MOU, revenue share) and blocks closing steps 3/5 until the gate is satisfied; the threshold lives in Settings → ข้อมูลบริษัท.
+- **Project tracks**: `R&D` swaps the 14-step delivery pipeline for an 8-step product pipeline (Requirement Card → Prototype/POC → product documents → sign-off); other tracks keep the delivery steps.
+- **Workspace auto-arrange**: “จัดเรียงให้พอดี” packs cards into a 12-column **row grid** (16px gutters, row height snapped to 8px, cards in a row share the tallest height, leftover columns filled by the largest fitting card).
+- **Workspace layers**: up to 8 named layers (view sets) with presets for ปฏิบัติการ / ผู้บริหาร / การเงิน; each layer keeps its own positions and hidden cards; add, duplicate, rename, delete and switch from the chip bar (stored per user on the server).
 - **Step documents**: each doc can be `required` and/or `signoff`; attachments carry signer name/role/date/version (inline editor), the step shows what is missing, and the complete button stays disabled until docs and sign-offs are present.
 - **Touch**: interactive controls use `touch-action: manipulation`; the mobile drawer closes on a left swipe.
-- **Popovers**: desktop anchored panels; ≤700px they are clamped to the viewport width and height with internal scroll.
+- **Popovers**: desktop anchored panels; ≤700px they are clamped to the viewport width and height with internal scroll. A `pointerdown` anywhere outside the popover wrappers dismisses both the notifications panel and the user menu.
 - **Favorites**: drag to reorder on desktop; order is persisted and reused by the mobile shortcut bar.
 
 ## Dashboard structure

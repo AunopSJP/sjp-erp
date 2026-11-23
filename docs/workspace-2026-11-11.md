@@ -33,9 +33,27 @@ Open it from:
 2. Drag a card by its floating handle. Cards snap to an 8px vertical grid.
 3. Drag the bottom-right corner to change width (18–100%).
 4. Use the **×** on a card handle to hide it; the chip row at the top restores it.
-5. **จัดเรียงอัตโนมัติ** returns to the compact grid arrangement.
+5. **จัดเรียงให้พอดี** packs cards into a 12-column **row grid**:
+   - cards in the same row share the tallest height (snapped up to 8px),
+   - 16px gutters, no overlaps by construction,
+   - leftover columns are filled with the largest fitting card.
 6. **รีเซ็ต** deletes the saved arrangement and restores the default.
 7. **เสร็จสิ้น** leaves edit mode. Changes are also auto-saved while editing.
+
+## Layers
+
+Each user can keep up to **8 layers** (view sets) and switch from the chip bar:
+
+| Layer | Intended use |
+|---|---|
+| หลัก | everything visible |
+| ปฏิบัติการ | ops work: KPI, my work, approvals, queue, activity, status, team, shortcuts |
+| ผู้บริหาร | KPI, approvals, finance, project steps, activity, shortcuts |
+| การเงิน | KPI, approvals, finance, shortcuts |
+
+- Positions **and** hidden cards are stored **per layer**; switching restores that layer's arrangement.
+- Editing tools: add blank layer, add from a preset, duplicate, rename, delete (minimum one).
+- The active layer is saved with the layout, so the same layer opens next time.
 
 Keyboard (focus the card handle):
 
@@ -50,14 +68,15 @@ label (“จัดหน้าจอบนจอใหญ่”).
 ## Persistence
 
 - `GET /api/prefs/workspace` – current user's layout
-- `PUT /api/prefs/workspace` – save `{ version, widgets, hidden }`
+- `PUT /api/prefs/workspace` – save `{ version, widgets, hidden, layers, activeLayerId }`
 - `DELETE /api/prefs/workspace` – reset
 
 Layouts are stored per user in the `settings` table under `workspace:<userId>`, so they
 survive browser changes and are included in backups. The server clamps coordinates
-(x 0–100%, y 0–100000px, width 6–100%, z 0–10000), drops unknown hidden keys and rejects
-payloads over 64 KB. Overlapping cards are allowed; the most recently moved card has the
-highest z-order.
+(x 0–100%, y 0–100000px, width 6–100%, height 0–20000px, z 0–10000), drops unknown
+hidden keys, limits layers to 8 and rejects payloads over 256 KB. Overlapping cards are
+allowed when arranged by hand; the most recently moved card has the highest z-order.
+Auto-arrange never produces overlaps.
 
 ## Verification
 

@@ -307,6 +307,12 @@ export class DashboardComponent implements OnInit, OnDestroy {
     if (this.auth.can('warehouse', 'view') && data.stock.low > 0) {
       items.push({ key: 'stock', label: 'สินค้าใกล้หมด', count: data.stock.low, tone: 'blue', link: '/warehouse' });
     }
+    if (this.auth.can('projects', 'view') && (data.contracts?.expired ?? 0) > 0) {
+      items.push({ key: 'svc-expired', label: 'สัญญาบริการหมดอายุ', count: data.contracts.expired, tone: 'red', link: '/reports?report=service-contracts' });
+    }
+    if (this.auth.can('projects', 'view') && (data.contracts?.expiring ?? 0) > 0) {
+      items.push({ key: 'svc-expiring', label: 'สัญญาบริการใกล้หมด (60 วัน)', count: data.contracts.expiring, tone: 'amber', link: '/reports?report=service-contracts' });
+    }
     return items;
   });
 

@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { CurrentUser } from '../auth/current-user.decorator.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { AccessService } from '../common/access.service.js';
+import { parseListQuery } from '../records/list-query.js';
 import { DashboardService } from './dashboard.service.js';
 import { PmService } from './pm.service.js';
 import { ProjectsService } from './projects.service.js';
@@ -132,6 +134,11 @@ export class PurchasingController {
     return this.purchasing.list(user);
   }
 
+  @Get('page')
+  page(@CurrentUser() user: SafeUser, @Query() query: Record<string, string>) {
+    return this.purchasing.page(user, parseListQuery(query));
+  }
+
   @Get(':id')
   detail(@CurrentUser() user: SafeUser, @Param('id') id: string) {
     return this.purchasing.detail(user, id);
@@ -227,14 +234,36 @@ export class ReportsController {
     private readonly access: AccessService,
   ) {}
 
+  @Get(':name/pdf')
+  async reportPdf(
+    @CurrentUser() user: SafeUser,
+    @Param('name') name: string,
+    @Query() query: Record<string, string>,
+    @Res() res: Response,
+  ): Promise<void> {
+    this.access.require(user, 'reports', 'view');
+    const result = await this.reports.pdf(user, name, query?.['month']);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', String(result.buffer.length));
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(result.filename)}`);
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.end(result.buffer);
+  }
+
   @Get(':name')
-  report(@CurrentUser() user: SafeUser, @Param('name') name: string) {
+  report(@CurrentUser() user: SafeUser, @Param('name') name: string, @Query() query: Record<string, string>) {
     this.access.require(user, 'reports', 'view');
     switch (name) {
       case 'tickets':
         return this.reports.tickets(user);
       case 'projects':
         return this.reports.projects(user);
+      case 'service-contracts':
+        return this.reports.serviceContracts(user);
+      case 'revenue-share':
+        return this.reports.revenueShare(user);
+      case 'monthly-service':
+        return this.reports.monthlyService(user, query?.['month']);
       case 'serials':
         return this.reports.serials(user);
       case 'stock':

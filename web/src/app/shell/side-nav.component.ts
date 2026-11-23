@@ -19,6 +19,8 @@ export interface SideNavItem {
   path: string;
   label: string;
   short?: string;
+  description?: string;
+  alias?: string;
   icon: string;
   resource?: string;
 }
@@ -252,6 +254,7 @@ export type SideNavMode = 'expanded' | 'rail' | 'drawer';
 export class SideNavComponent implements AfterViewInit {
   readonly mode = input<SideNavMode>('expanded');
   readonly groups = input<SideNavGroup[]>([]);
+  readonly catalog = input<SideNavItem[]>([]);
   readonly favorites = input<string[]>([]);
   readonly closedGroups = input<string[]>([]);
   readonly currentUrl = input('');
@@ -276,8 +279,6 @@ export class SideNavComponent implements AfterViewInit {
   private readonly host = inject(ElementRef) as ElementRef<HTMLElement>;
   private readonly searchInput = viewChild<ElementRef<HTMLInputElement>>('navSearch');
   private closeTimer: ReturnType<typeof setTimeout> | null = null;
-
-  private readonly allItems = computed<SideNavItem[]>(() => this.groups().flatMap((group) => group.items));
 
   readonly favoriteItems = computed<SideNavItem[]>(() =>
     this.favorites()
@@ -309,7 +310,7 @@ export class SideNavComponent implements AfterViewInit {
   }
 
   private findItem(path: string): SideNavItem | undefined {
-    return this.allItems().find((item) => item.path === path);
+    return this.catalog().find((item) => item.path === path);
   }
 
   isFavorite(path: string): boolean {

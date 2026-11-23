@@ -31,8 +31,8 @@ export const moduleGuard = (resource: string, action = 'view'): CanActivateFn =>
   const toast = inject(ToastService);
   if (!auth.user()) return router.parseUrl('/login');
   if (auth.can(resource, action)) return true;
-  toast.error('ไม่มีสิทธิ์เข้าถึงหน้านี้');
-  return router.parseUrl('/');
+  toast.error('ไม่พบรายการหรือคุณไม่มีสิทธิ์เข้าถึง');
+  return router.parseUrl('/apps');
 };
 
 /** Same protection for metadata-driven entity routes (/entities/:entity). */
@@ -44,15 +44,12 @@ export const entityGuard: CanActivateFn = async (route: ActivatedRouteSnapshot) 
   if (!auth.user()) return router.parseUrl('/login');
   const key = route.paramMap.get('entity') ?? '';
   try {
-    const definition = (await firstValueFrom(meta.ensureLoaded())).entities[key];
-    if (!definition) {
-      toast.error('ไม่พบชนิดข้อมูลนี้');
-      return router.parseUrl('/');
-    }
-    if (auth.can(definition.resource, 'view')) return true;
+    const definition = (await firstValueFrom(meta.ensureLoaded(true))).entities[key];
+    if (definition?.can?.['view']) return true;
   } catch {
-    return true;
+    toast.error('โหลดข้อมูลโมดูลไม่ได้ กรุณาลองใหม่');
+    return router.parseUrl('/apps');
   }
-  toast.error('ไม่มีสิทธิ์เข้าถึงหน้านี้');
-  return router.parseUrl('/');
+  toast.error('ไม่พบรายการหรือคุณไม่มีสิทธิ์เข้าถึง');
+  return router.parseUrl('/apps');
 };

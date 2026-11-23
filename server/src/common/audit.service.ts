@@ -5,6 +5,7 @@ import type { Db } from '../db/database.service.js';
 import { audit } from '../db/schema.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { nowIso } from './dates.js';
+import { currentWorkspaceId } from './workspace-context.js';
 
 export interface AuditInput {
   action: string;
@@ -24,6 +25,7 @@ export class AuditService {
       .insert(audit)
       .values({
         id: crypto.randomUUID(),
+        workspaceId: currentWorkspaceId(),
         at: nowIso(),
         userId: actor?.id ?? null,
         userName: actor?.name ?? 'ระบบ',
@@ -38,19 +40,23 @@ export class AuditService {
   }
 
   listByEntity(entity: string, recordId?: string) {
-    const where = recordId ? and(eq(audit.entity, entity), eq(audit.recordId, recordId)) : eq(audit.entity, entity);
+    const where = recordId
+      ? and(eq(audit.entity, entity), eq(audit.recordId, recordId), eq(audit.workspaceId, currentWorkspaceId()))
+      : and(eq(audit.entity, entity), eq(audit.workspaceId, currentWorkspaceId()));
     return this.db.select().from(audit).where(where).orderBy(desc(audit.at)).all();
   }
 
   recent(limit = 20) {
-    return this.db.select().from(audit).orderBy(desc(audit.at)).limit(limit).all();
+    return this.db.select().from(audit)
+      .where(eq(audit.workspaceId, currentWorkspaceId()))
+      .orderBy(desc(audit.at)).limit(limit).all();
   }
 
   recentForUser(userId: string, limit = 20) {
     return this.db
       .select()
       .from(audit)
-      .where(eq(audit.userId, userId))
+      .where(and(eq(audit.userId, userId), eq(audit.workspaceId, currentWorkspaceId())))
       .orderBy(desc(audit.at))
       .limit(limit)
       .all();

@@ -1,13 +1,17 @@
 ﻿import {
   ChangeDetectionStrategy,
   Component,
+  ElementRef,
+  HostListener,
   OnDestroy,
   OnInit,
+  QueryList,
+  ViewChild,
+  ViewChildren,
   computed,
   effect,
   inject,
   signal,
-  untracked,
 } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter } from 'rxjs';
@@ -21,9 +25,11 @@ import { IconComponent } from '../shared/icon.component';
 import {
   readNavClosedGroups,
   readNavFavorites,
+  readNavRecent,
   readSidebarCollapsed,
   writeNavClosedGroups,
   writeNavFavorites,
+  writeNavRecent,
   writeSidebarCollapsed,
 } from '../core/storage';
 import type { ThemePref } from '../core/storage';
@@ -31,6 +37,8 @@ import type { SideNavGroup, SideNavItem } from './side-nav.component';
 import { SideNavComponent } from './side-nav.component';
 import type { QuickCreateAction } from './quick-create.component';
 import { QuickCreateComponent } from './quick-create.component';
+import type { LauncherContext } from '../pages/app-launcher.component';
+import { WorkspaceSwitchService } from '../core/workspace-switch.service';
 
 type NavItem = SideNavItem;
 type NavGroup = SideNavGroup;
@@ -124,6 +132,7 @@ const GROUPS: NavGroup[] = [
       { path: '/entities/invoices', label: 'ใบแจ้งหนี้/วางบิล', icon: 'doc', resource: 'accounting' },
       { path: '/entities/receipts', label: 'ใบเสร็จ/รับชำระ', icon: 'receipt', resource: 'accounting' },
       { path: '/entities/expenses', label: 'ค่าใช้จ่าย', icon: 'chart', resource: 'accounting' },
+      { path: '/entities/revenueShares', label: 'แบ่งรายได้', icon: 'chart', resource: 'accounting' },
     ],
   },
   {
@@ -159,15 +168,22 @@ const QUICK_ACTIONS: QuickCreateAction[] = [
 ];
 
 const DEFAULT_FAVORITES: string[] = [];
-const DEFAULT_CLOSED_GROUPS = [
-  ...GROUPS.map((group) => group.label).filter((label) => label !== 'ภาพรวม'),
-  'โมดูลของฉัน',
-];
 const MAX_FAVORITES = 6;
+const APP_ALIASES: Record<string, string> = {
+  '/': 'Dashboard Home', '/workspace': 'Workspace', '/my': 'My work', '/calendar': 'Calendar',
+  '/approvals': 'Approvals', '/tickets': 'Service Tickets', '/pm': 'Preventive Maintenance',
+  '/projects': 'Projects', '/vehicles': 'Vehicle booking', '/entities/vehicles': 'Fleet',
+  '/purchase-orders': 'Purchase Orders Procurement PO', '/warehouse': 'Warehouse Inventory',
+  '/entities/invoices': 'Invoices', '/entities/receipts': 'Receipts Payments', '/entities/expenses': 'Expenses',
+  '/entities/revenueShares': 'Revenue sharing', '/entities/customers': 'Customers',
+  '/entities/vendors': 'Vendors Suppliers', '/entities/contacts': 'Contacts', '/entities/sites': 'Sites',
+  '/entities/items': 'Items Assets', '/entities/serials': 'Serial Numbers', '/reports': 'Reports', '/settings': 'Settings',
+};
 
 /** Pages reachable from the user menu rather than the sidebar. */
 const EXTRA_PAGES: Record<string, { label: string; group: string }> = {
   '/account': { label: 'บัญชีของฉัน', group: 'ระบบ' },
+  '/apps': { label: 'แอปทั้งหมด', group: 'SJP ERP' },
 };
 
 const normalizeUrl = (url: string): string => url.split('?')[0].split('#')[0];
@@ -188,9 +204,10 @@ const matchesPath = (url: string, path: string): boolean => {
       <app-side-nav
         class="sb-desktop"
         [mode]="sidebarCollapsed() ? 'rail' : 'expanded'"
-        [groups]="visibleGroups()"
+        [groups]="sidebarGroups()"
+        [catalog]="allItems()"
         [favorites]="favorites()"
-        [closedGroups]="closedGroups()"
+        [closedGroups]="navClosed()"
         [currentUrl]="currentUrl()"
         [pendingApprovals]="pendingApprovals()"
         [theme]="theme()"
@@ -203,7 +220,7 @@ const matchesPath = (url: string, path: string): boolean => {
 
       <div class="main2">
         <header class="top">
-          <button class="menu-chip" type="button" (click)="openMenu()" aria-label="เปิดเมนู">
+          <button class="menu-chip" type="button" (click)="openMenu($event.currentTarget)" aria-label="เปิดเมนู">
             <app-icon name="menu" [size]="18" /> <span class="menu-chip-label">เมนู</span>
           </button>
           <div class="crumbs">
@@ -211,6 +228,19 @@ const matchesPath = (url: string, path: string): boolean => {
             <app-icon name="chevron" [size]="16" />
             <b>{{ pageInfo().label }}</b>
           </div>
+          @if (workspaces.items().length > 1) {
+            <label class="ws-switch">
+              <span class="sr-only">Workspace ปัจจุบัน</span>
+              <select [value]="workspaces.active()" [disabled]="workspaces.busy()" (change)="switchWorkspace($event)" aria-label="สลับ Workspace">
+                @for (workspace of workspaces.items(); track workspace.id) {
+                  <option [value]="workspace.id" [selected]="workspace.id === workspaces.active()">{{ workspace.name }}</option>
+                }
+              </select>
+            </label>
+          }
+          <a class="icon-btn launcher-entry" routerLink="/apps" routerLinkActive="active" ariaCurrentWhenActive="page" aria-label="แอปทั้งหมด" title="แอปทั้งหมด">
+            <app-icon name="grid" [size]="20" /><span>แอปทั้งหมด</span>
+          </a>
           <span class="grow"></span>
           <button class="search-box" type="button" (click)="openPalette()" aria-keyshortcuts="Control+K">
             <app-icon name="search" [size]="18" aria-hidden="true" />
@@ -247,7 +277,7 @@ const matchesPath = (url: string, path: string): boolean => {
             }
           </div>
           <div class="pop-wrap">
-            <button class="user-btn" type="button" (click)="userOpen.set(!userOpen())" [attr.aria-expanded]="userOpen()">
+            <button class="user-btn" type="button" (click)="toggleUserMenu()" [attr.aria-expanded]="userOpen()">
               <span class="avatar">{{ initials() }}</span>
               <span class="user-name" [title]="auth.user()?.name">{{ auth.user()?.name }}</span>
             </button>
@@ -284,7 +314,7 @@ const matchesPath = (url: string, path: string): boolean => {
           </div>
         </header>
 
-        <main id="main-content" class="content" tabindex="-1"><router-outlet /></main>
+        <main id="main-content" class="content" tabindex="-1"><router-outlet [routerOutletData]="launcherContext()" /></main>
 
         <nav class="bottombar" aria-label="ทางลัดด้านล่าง">
           @for (item of mobilePinned(); track item.path) {
@@ -292,7 +322,7 @@ const matchesPath = (url: string, path: string): boolean => {
               <span class="bb-ic"><app-icon [name]="item.icon" [size]="24" /></span><span>{{ item.short ?? item.label }}</span>
             </a>
           }
-          <button class="bb-item" type="button" (click)="openMenu()"><span class="bb-ic"><app-icon name="grid" [size]="24" /></span><span>เมนู</span></button>
+          <button class="bb-item" type="button" (click)="openMenu($event.currentTarget)"><span class="bb-ic"><app-icon name="menu" [size]="24" /></span><span>เมนู</span></button>
         </nav>
       </div>
     </div>
@@ -308,9 +338,10 @@ const matchesPath = (url: string, path: string): boolean => {
         <app-side-nav
           class="sb-drawer-host"
           mode="drawer"
-          [groups]="visibleGroups()"
+          [groups]="sidebarGroups()"
+          [catalog]="allItems()"
           [favorites]="favorites()"
-          [closedGroups]="closedGroups()"
+          [closedGroups]="navClosed()"
           [currentUrl]="currentUrl()"
           [pendingApprovals]="pendingApprovals()"
           [theme]="theme()"
@@ -328,7 +359,7 @@ const matchesPath = (url: string, path: string): boolean => {
         <div class="palette" role="dialog" aria-label="ค้นหา">
           <div class="palette-input">
             <app-icon name="search" />
-            <input autofocus [value]="paletteQuery()" (input)="setPaletteQuery($any($event.target).value)" (keydown)="paletteKey($event)" placeholder="ค้นหาเมนู เลขเอกสาร ลูกค้า สินค้า…" aria-label="ค้นหา" />
+            <input #paletteInput autofocus [value]="paletteQuery()" (input)="setPaletteQuery($any($event.target).value)" placeholder="ค้นหาเมนู เลขเอกสาร ลูกค้า สินค้า…" aria-label="ค้นหา" />
             <kbd>Esc</kbd>
           </div>
           <div class="palette-list">
@@ -336,7 +367,7 @@ const matchesPath = (url: string, path: string): boolean => {
               <div class="state">ไม่พบเมนูหรือรายการที่ตรงกับ “{{ paletteQuery() }}”</div>
             } @else {
               @for (item of paletteResults(); track item.key; let i = $index) {
-                <button type="button" class="palette-row" [class.on]="paletteIndex() === i" (mouseenter)="paletteIndex.set(i)" (click)="go(item)">
+                <button type="button" class="palette-row" #paletteRow [class.on]="paletteIndex() === i" (mouseenter)="paletteIndex.set(i)" (click)="go(item)">
                   <app-icon [name]="item.icon" [size]="18" />
                   <span class="pl">{{ item.label }}</span>
                   <span class="muted small">{{ item.subtitle || item.group }}</span>
@@ -353,11 +384,22 @@ const matchesPath = (url: string, path: string): boolean => {
       </div>
     }
   `,
+  styles: [`
+    .launcher-entry { gap: 6px; flex: 0 0 auto; width: auto; min-width: 40px; padding-inline: 8px; }
+    .launcher-entry.active { color: var(--pri); background: var(--pri-l); }
+    .ws-switch select { max-width: 200px; }
+    @media (max-width: 900px) { .ws-switch { display: none; } }
+    @media (max-width: 1100px) { .launcher-entry span { display: none; } }
+  `],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ShellComponent implements OnInit, OnDestroy {
+  @ViewChild('paletteInput') private paletteInput?: ElementRef<HTMLInputElement>;
+  @ViewChildren('paletteRow') private paletteRows?: QueryList<ElementRef<HTMLElement>>;
+
   readonly auth = inject(AuthService);
   private readonly meta = inject(MetaService);
+  readonly workspaces = inject(WorkspaceSwitchService);
   private readonly themeService = inject(ThemeService);
   private readonly api = inject(ApiService);
   private readonly router = inject(Router);
@@ -384,17 +426,18 @@ export class ShellComponent implements OnInit, OnDestroy {
   readonly notifications = signal<NotificationItem[]>([]);
   readonly notificationsOpen = signal(false);
   private drawerSwipeFrom: { x: number; y: number } | null = null;
+  private drawerTrigger: HTMLElement | null = null;
 
   constructor() {
     effect(() => {
-      const url = this.currentUrl();
-      const groups = this.visibleGroups();
-      untracked(() => this.syncActiveGroup(url, groups));
+      document.body.classList.toggle('palette-open', this.paletteOpen());
     });
   }
 
-  private readonly storedFavorites = signal<string[] | null>(readNavFavorites());
-  readonly closedGroups = signal<string[]>(readNavClosedGroups() ?? DEFAULT_CLOSED_GROUPS);
+  private readonly navUserId = this.auth.user()?.id;
+  private readonly storedFavorites = signal<string[] | null>(readNavFavorites(this.navUserId));
+  readonly closedGroups = signal<string[]>(readNavClosedGroups(this.navUserId) ?? []);
+  private readonly recentPaths = signal(readNavRecent(this.navUserId));
 
   readonly visibleGroups = computed<NavGroup[]>(() => {
     const groups: NavGroup[] = GROUPS.map((group) => ({
@@ -402,7 +445,7 @@ export class ShellComponent implements OnInit, OnDestroy {
       items: group.items.filter((item) => !item.resource || this.auth.can(item.resource, 'view')),
     })).filter((group) => group.items.length);
     const custom = (this.meta.meta()?.customModules ?? [])
-      .filter((entity) => this.auth.can(entity.key, 'view'));
+      .filter((entity) => entity.can?.['view']);
     const ungrouped: NavItem[] = [];
     for (const entity of custom) {
       const item: NavItem = {
@@ -410,12 +453,32 @@ export class ShellComponent implements OnInit, OnDestroy {
         label: entity.navLabel || entity.label,
         icon: entity.icon || 'puzzle',
         resource: entity.key,
+        description: entity.description,
+        alias: [entity.key, entity.label, entity.navLabel, ...(entity.aliases ?? [])].filter(Boolean).join(' '),
       };
       const target = entity.group ? groups.find((group) => group.label === entity.group) : undefined;
       if (target) target.items = [...target.items, item];
       else ungrouped.push(item);
     }
     return ungrouped.length ? [...groups, { label: 'โมดูลของฉัน', icon: 'puzzle', items: ungrouped }] : groups;
+  });
+
+  /** Every group the user may see; only the current one starts expanded so the rail stays short. */
+  readonly sidebarGroups = computed(() => this.visibleGroups());
+
+  private readonly activeGroupLabel = computed(() => {
+    const url = this.currentUrl();
+    const groups = this.visibleGroups();
+    return (groups.find((group) => group.items.some((item) => matchesPath(url, item.path))) ?? groups[0])?.label ?? '';
+  });
+  private readonly openedGroups = signal<string[]>([]);
+  readonly navClosed = computed(() => {
+    const active = this.activeGroupLabel();
+    return this.visibleGroups()
+      .filter((group) => (group.label === active
+        ? this.closedGroups().includes(group.label)
+        : !this.openedGroups().includes(group.label)))
+      .map((group) => group.label);
   });
 
   private readonly allNavItems = computed<NavItem[]>(() => this.visibleGroups().flatMap((group) => group.items));
@@ -468,13 +531,26 @@ export class ShellComponent implements OnInit, OnDestroy {
   });
 
   readonly allItems = computed<(NavItem & { group: string })[]>(() =>
-    this.visibleGroups().flatMap((group) => group.items.map((item) => ({ ...item, group: group.label }))),
+    this.visibleGroups().flatMap((group) => group.items.map((item) => ({
+      ...item, group: group.label, alias: item.alias ?? APP_ALIASES[item.path],
+    }))),
   );
+
+  readonly launcherContext = computed<LauncherContext>(() => ({
+    items: this.allItems(),
+    favorites: this.favorites(),
+    recent: this.recentPaths(),
+    loading: this.meta.loading(),
+    failed: this.meta.failed(),
+    canCreate: this.auth.can('settings', 'view') && this.auth.can('settings', 'edit'),
+    retry: () => this.meta.load(true),
+    toggleFavorite: (path) => this.toggleFavorite(path),
+  }));
 
   readonly paletteResults = computed<PaletteItem[]>(() => {
     const query = this.paletteQuery().trim().toLowerCase();
     const nav: PaletteItem[] = (query
-      ? this.allItems().filter((item) => `${item.label} ${item.group}`.toLowerCase().includes(query))
+      ? this.allItems().filter((item) => `${item.label} ${item.group} ${item.alias ?? ''}`.toLowerCase().includes(query))
       : this.allItems()
     )
       .slice(0, 20)
@@ -504,7 +580,7 @@ export class ShellComponent implements OnInit, OnDestroy {
     if (extra) return extra;
     const items = this.allItems();
     const hit = items
-      .filter((item) => (item.path === '/' ? url === '/' : url.startsWith(item.path)))
+      .filter((item) => matchesPath(url, item.path))
       .sort((a, b) => b.path.length - a.path.length)[0];
     return hit ? { label: hit.label.length > 28 ? 'รายการ' : hit.label, group: hit.group } : { label: 'หน้า', group: 'SJP ERP' };
   });
@@ -512,13 +588,21 @@ export class ShellComponent implements OnInit, OnDestroy {
   readonly initials = computed(() => (this.auth.user()?.name ?? '?').trim().charAt(0));
 
   ngOnInit(): void {
-    this.meta.load();
+    this.meta.load(true);
+    this.workspaces.load();
     this.loadApprovals();
     this.loadNotifications();
     this.router.events.pipe(filter((event) => event instanceof NavigationEnd)).subscribe((event) => {
       const url = (event as NavigationEnd).urlAfterRedirects;
       this.currentUrl.set(url);
-      this.closeMenu();
+      this.closeMenu(false);
+      if (normalizeUrl(url) === '/apps') this.meta.load(true);
+      const visited = this.allItems().find((item) => matchesPath(url, item.path));
+      if (visited && visited.path !== '/') {
+        const next = [visited.path, ...this.recentPaths().filter((path) => path !== visited.path)].slice(0, 8);
+        this.recentPaths.set(next);
+        writeNavRecent(next, this.navUserId);
+      }
       this.userOpen.set(false);
       this.paletteOpen.set(false);
       this.paletteQuery.set('');
@@ -538,6 +622,10 @@ export class ShellComponent implements OnInit, OnDestroy {
   }
 
   /** Explicit light/dark; the sidebar switch keeps its one-tap behaviour. */
+  switchWorkspace(event: Event): void {
+    if (event.target instanceof HTMLSelectElement) this.workspaces.switchTo(event.target.value);
+  }
+
   toggleTheme(): void {
     this.themeService.toggle();
   }
@@ -556,14 +644,17 @@ export class ShellComponent implements OnInit, OnDestroy {
     writeSidebarCollapsed(next);
   }
 
-  openMenu(): void {
+  openMenu(trigger?: EventTarget | null): void {
+    this.drawerTrigger = trigger instanceof HTMLElement ? trigger : null;
     this.menuOpen.set(true);
     document.body.classList.add('sb-lock');
   }
 
-  closeMenu(): void {
+  closeMenu(restoreFocus = true): void {
     this.menuOpen.set(false);
     document.body.classList.remove('sb-lock');
+    if (restoreFocus) this.drawerTrigger?.focus();
+    this.drawerTrigger = null;
   }
 
   /** Swipe the drawer to the left to dismiss it (touch only). */
@@ -584,6 +675,7 @@ export class ShellComponent implements OnInit, OnDestroy {
   }
 
   toggleFavorite(path: string): void {
+    if (!this.visiblePaths().has(path)) return;
     const current = this.favorites();
     if (!current.includes(path) && current.length >= MAX_FAVORITES) {
       this.toast.error(`ปักหมุดได้สูงสุด ${MAX_FAVORITES} รายการ`);
@@ -591,36 +683,27 @@ export class ShellComponent implements OnInit, OnDestroy {
     }
     const next = current.includes(path) ? current.filter((item) => item !== path) : [...current, path];
     this.storedFavorites.set(next);
-    writeNavFavorites(next);
+    writeNavFavorites(next, this.navUserId);
   }
 
   reorderFavorites(paths: string[]): void {
     const visible = new Set(this.favorites());
     const next = paths.filter((path) => visible.has(path)).slice(0, MAX_FAVORITES);
     this.storedFavorites.set(next);
-    writeNavFavorites(next);
+    writeNavFavorites(next, this.navUserId);
   }
 
   toggleGroup(label: string): void {
-    const labels = this.visibleGroups().map((group) => group.label);
+    if (label !== this.activeGroupLabel()) {
+      this.openedGroups.update((list) => (list.includes(label) ? list.filter((item) => item !== label) : [...list, label]));
+      return;
+    }
     const current = this.closedGroups();
     const next = current.includes(label)
-      ? labels.filter((item) => item !== label)
-      : [...new Set([...current, label])];
+      ? current.filter((item) => item !== label)
+      : [...current, label];
     this.closedGroups.set(next);
-    writeNavClosedGroups(next);
-  }
-
-  private syncActiveGroup(url: string, groups: NavGroup[]): void {
-    const group = groups.find((candidate) =>
-      candidate.items.some((item) => matchesPath(url, item.path)),
-    );
-    if (!group) return;
-    const closed = this.closedGroups();
-    const next = groups.map((candidate) => candidate.label).filter((label) => label !== group.label);
-    if (next.join('|') === closed.join('|')) return;
-    this.closedGroups.set(next);
-    writeNavClosedGroups(next);
+    writeNavClosedGroups(next, this.navUserId);
   }
 
   private loadApprovals(): void {
@@ -644,6 +727,22 @@ export class ShellComponent implements OnInit, OnDestroy {
     if (next) this.loadNotifications();
   }
 
+  toggleUserMenu(): void {
+    const next = !this.userOpen();
+    this.userOpen.set(next);
+    this.notificationsOpen.set(false);
+  }
+
+  /** Clicking anywhere outside the popover wrappers dismisses both panels. */
+  @HostListener('document:pointerdown', ['$event'])
+  onDocumentPointer(event: PointerEvent): void {
+    if (!this.notificationsOpen() && !this.userOpen()) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('.pop-wrap')) return;
+    this.notificationsOpen.set(false);
+    this.userOpen.set(false);
+  }
+
   openNotification(item: NotificationItem): void {
     this.notificationsOpen.set(false);
     void this.router.navigateByUrl(item.link);
@@ -661,6 +760,38 @@ export class ShellComponent implements OnInit, OnDestroy {
     this.paletteIndex.set(0);
     this.recordResults.set([]);
     this.paletteOpen.set(true);
+    // The overlay is created after this call and `autofocus` is unreliable for
+    // dynamically inserted nodes, so move focus explicitly.
+    setTimeout(() => {
+      const input = this.paletteInput?.nativeElement;
+      if (!input) return;
+      input.focus();
+      input.select();
+      this.revealPalette();
+    }, 0);
+  }
+
+  movePalette(delta: number): void {
+    const count = this.paletteResults().length;
+    if (!count) return;
+    this.paletteIndex.update((index) => Math.max(0, Math.min(count - 1, index + delta)));
+    this.revealPalette();
+  }
+
+  setPaletteIndex(index: number): void {
+    const count = this.paletteResults().length;
+    if (!count) return;
+    this.paletteIndex.set(Math.max(0, Math.min(count - 1, index)));
+    this.revealPalette();
+  }
+
+  /** Keeps the highlighted row inside the scrollable list. */
+  private revealPalette(): void {
+    const index = this.paletteIndex();
+    requestAnimationFrame(() => {
+      const row = this.paletteRows?.get(index)?.nativeElement;
+      row?.scrollIntoView({ block: 'nearest' });
+    });
   }
 
   go(item: PaletteItem): void {
@@ -674,6 +805,7 @@ export class ShellComponent implements OnInit, OnDestroy {
   setPaletteQuery(value: string): void {
     this.paletteQuery.set(value);
     this.paletteIndex.set(0);
+    this.revealPalette();
     if (this.searchTimer) clearTimeout(this.searchTimer);
     const query = value.trim();
     if (query.length < 2) {
@@ -685,26 +817,11 @@ export class ShellComponent implements OnInit, OnDestroy {
         next: (result) => {
           this.recordResults.set(result.results ?? []);
           this.paletteIndex.set(0);
+          this.revealPalette();
         },
         error: () => this.recordResults.set([]),
       });
     }, 250);
-  }
-
-  paletteKey(event: KeyboardEvent): void {
-    if (event.key === 'Escape') this.paletteOpen.set(false);
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      this.paletteIndex.update((index) => Math.min(this.paletteResults().length - 1, index + 1));
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      this.paletteIndex.update((index) => Math.max(0, index - 1));
-    }
-    if (event.key === 'Enter') {
-      const item = this.paletteResults()[Math.min(this.paletteIndex(), this.paletteResults().length - 1)];
-      if (item) this.go(item);
-    }
   }
 
   onOverlay(event: MouseEvent): void {
@@ -718,6 +835,34 @@ export class ShellComponent implements OnInit, OnDestroy {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
       event.preventDefault();
       this.openPalette();
+    }
+    if (this.paletteOpen()) {
+      if (event.key === 'Escape') {
+        this.paletteOpen.set(false);
+        return;
+      }
+      const count = this.paletteResults().length;
+      const actions: Record<string, () => void> = {
+        ArrowDown: () => this.movePalette(1),
+        ArrowUp: () => this.movePalette(-1),
+        PageDown: () => this.movePalette(6),
+        PageUp: () => this.movePalette(-6),
+        Home: () => this.setPaletteIndex(0),
+        End: () => this.setPaletteIndex(count - 1),
+      };
+      const action = actions[event.key];
+      if (action) {
+        // Stop the page behind the dialog from scrolling, even if focus escaped.
+        event.preventDefault();
+        action();
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        const item = this.paletteResults()[Math.min(this.paletteIndex(), count - 1)];
+        if (item) this.go(item);
+        return;
+      }
     }
     if (event.key === 'Escape') {
       this.closeMenu();

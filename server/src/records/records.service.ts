@@ -1,6 +1,7 @@
 import { InjectDrizzle } from '@nestjs/drizzle';
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import { and, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { alias, type AnySQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { Db } from '../db/database.service.js';
 import { counters, records, users } from '../db/schema.js';
 import type { SafeUser } from '../auth/user.types.js';
@@ -10,15 +11,10 @@ import { AuditService } from '../common/audit.service.js';
 import { nowIso, isDateOnly } from '../common/dates.js';
 import { FieldValidationError, bad, notFound } from '../common/exceptions.js';
 import { EventsService } from '../events/events.service.js';
+import { currentWorkspaceId } from '../common/workspace-context.js';
 import { getEntity, findEntity, ENTITY_DEFS, LISTS, projectSteps, ENTITY_WORKFLOW_KEY, WORKFLOWS, type EntityDef, type FieldDef } from '../meta/entities.js';
 
-export interface ListQuery {
-  search?: string;
-  page?: number | string;
-  pageSize?: number | string;
-  sort?: string;
-  filters?: Record<string, string>;
-}
+import { compileWhere, type ListQuery } from './list-query.js';
 
 export interface CreateOptions {
   system?: boolean;
@@ -32,9 +28,16 @@ export interface UpdateOptions {
   actor?: SafeUser | null;
   summary?: string;
   changes?: unknown[];
+  expectedUpdatedAt?: string;
 }
 
 export type RawRecord = typeof records.$inferSelect;
+
+export interface GroupSummary {
+  keys: (string | number | boolean | null)[];
+  count: number;
+  totals: Record<string, number>;
+}
 export type DecoratedRecord = Record<string, unknown> & {
   id: string;
   code: string;
@@ -88,8 +91,8 @@ export class RecordsService {
     const def = getEntity(entityKey);
     if (!def) notFound('ไม่พบชนิดข้อมูล');
     const where = includeDeleted
-      ? eq(records.entity, entityKey)
-      : and(eq(records.entity, entityKey), eq(records.deleted, false));
+      ? and(eq(records.entity, entityKey), eq(records.workspaceId, currentWorkspaceId()))
+      : and(eq(records.entity, entityKey), eq(records.deleted, false), eq(records.workspaceId, currentWorkspaceId()));
     return this.db.select().from(records).where(where).all();
   }
 
@@ -97,8 +100,23 @@ export class RecordsService {
     return this.db
       .select()
       .from(records)
-      .where(and(eq(records.entity, entityKey), eq(records.id, id)))
+      .where(and(
+        eq(records.entity, entityKey),
+        eq(records.id, id),
+        eq(records.workspaceId, currentWorkspaceId()),
+      ))
       .all()[0];
+  }
+
+  purchaseReceipts(orderIds: string[]): RawRecord[] {
+    if (!orderIds.length) return [];
+    return this.db.select().from(records).where(and(
+      eq(records.entity, 'stockMoves'),
+      eq(records.deleted, false),
+      eq(records.workspaceId, currentWorkspaceId()),
+      sql`json_extract(${records.data}, '$.type') = 'receive'`,
+      inArray(sql`json_extract(${records.data}, '$.po')`, orderIds),
+    )).all();
   }
 
   list(user: SafeUser, entityKey: string, query: ListQuery = {}) {
@@ -107,10 +125,14 @@ export class RecordsService {
   }
 
   /** Translate the row-level scope rules into a SQL predicate. */
-  private scopeCondition(def: EntityDef, user: SafeUser): SQL | undefined {
+  private scopeCondition(
+    def: EntityDef,
+    user: SafeUser,
+    table: { data: AnySQLiteColumn; id: AnySQLiteColumn; createdBy: AnySQLiteColumn } = records,
+  ): SQL | undefined {
     if (user.isAdmin || user.scope === 'all' || !def.scoped) return undefined;
-    const data = records.data;
-    const mine = sql`(json_extract(${data}, '$.assignee') = ${user.id} OR json_extract(${data}, '$.manager') = ${user.id} OR ${records.createdBy} = ${user.id})`;
+    const data = table.data;
+    const mine = sql`(json_extract(${data}, '$.assignee') = ${user.id} OR json_extract(${data}, '$.manager') = ${user.id} OR ${table.createdBy} = ${user.id})`;
     let scope: SQL;
     switch (user.scope) {
       case 'own':
@@ -121,18 +143,18 @@ export class RecordsService {
         break;
       case 'dept':
         if (!user.dept) return sql`1 = 0`;
-        scope = sql`(COALESCE(NULLIF(json_extract(${data}, '$.assignee'), ''), NULLIF(json_extract(${data}, '$.manager'), ''), ${records.createdBy}) IN (SELECT id FROM users WHERE dept = ${user.dept}))`;
+        scope = sql`(COALESCE(NULLIF(json_extract(${data}, '$.assignee'), ''), NULLIF(json_extract(${data}, '$.manager'), ''), ${table.createdBy}) IN (SELECT id FROM users WHERE dept = ${user.dept}))`;
         break;
       case 'project': {
         const ids = user.projectIds ?? [];
         if (!ids.length) return sql`1 = 0`;
-        scope = def.key === 'projects' ? inArray(records.id, ids) : inArray(sql`json_extract(${data}, '$.project')`, ids);
+        scope = def.key === 'projects' ? inArray(table.id, ids) : inArray(sql`json_extract(${data}, '$.project')`, ids);
         break;
       }
       case 'site': {
         const ids = user.siteIds ?? [];
         if (!ids.length) return sql`1 = 0`;
-        scope = def.key === 'sites' ? inArray(records.id, ids) : inArray(sql`json_extract(${data}, '$.site')`, ids);
+        scope = def.key === 'sites' ? inArray(table.id, ids) : inArray(sql`json_extract(${data}, '$.site')`, ids);
         break;
       }
       default:
@@ -143,67 +165,171 @@ export class RecordsService {
 
   private listFromSql(def: EntityDef, query: ListQuery, user: SafeUser, scope?: SQL) {
     const allowed = new Set(['code', 'status', 'stepLabel', '_createdAt', '_updatedAt', ...def.filters, ...def.cols, ...def.fields.map((field) => field.key)]);
-    const conditions: SQL[] = [eq(records.entity, def.key), eq(records.deleted, false)];
+    for (const field of def.fields) if (field.sensitive) allowed.delete(field.key);
+    const field = (key: string): SQL => {
+      if (key === 'amount' && def.key === 'purchaseOrders') {
+        return sql`COALESCE((SELECT sum(json_extract(value, '$.qty') * json_extract(value, '$.unitPrice'))
+          FROM json_each(${records.data}, '$.lines')), 0)`;
+      }
+      if (!allowed.has(key)) bad('ฟิลด์กรองหรือเรียงไม่พร้อมใช้งาน กรุณาปรับมุมมอง');
+      switch (key) {
+        case 'code': return sql`${records.code}`;
+        case '_createdAt': return sql`${records.createdAt}`;
+        case '_updatedAt': return sql`${records.updatedAt}`;
+        default: return sql`json_extract(${records.data}, ${'$.' + key})`;
+      }
+    };
+    const conditions: SQL[] = [
+      eq(records.entity, def.key),
+      eq(records.deleted, false),
+      eq(records.workspaceId, currentWorkspaceId()),
+    ];
     if (scope) conditions.push(scope);
+    const specOf = (key: string): FieldDef | undefined => def.fields.find((item) => item.key === key);
+    const multipleFields = new Set(def.fields.filter((item) => item.type === 'ref' && item.multiple).map((item) => item.key));
     for (const [key, value] of Object.entries(query.filters ?? {})) {
-      if (value === undefined || value === '' || !allowed.has(key)) continue;
-      if (key === 'code') conditions.push(eq(records.code, String(value)));
-      else if (key === '_createdAt') conditions.push(eq(records.createdAt, String(value)));
-      else if (key === '_updatedAt') conditions.push(eq(records.updatedAt, String(value)));
-      else conditions.push(sql`CAST(json_extract(${records.data}, ${'$.' + key}) AS TEXT) = ${String(value)}`);
+      const column = field(key);
+      if (value === undefined || value === '') continue;
+      if (multipleFields.has(key)) {
+        conditions.push(sql`EXISTS (SELECT 1 FROM json_each(${records.data}, ${'$.' + key}) WHERE value = ${String(value)})`);
+      } else {
+        conditions.push(sql`CAST(${column} AS TEXT) = ${String(value)}`);
+      }
     }
-    const search = String(query.search ?? '').trim().toLowerCase();
+    if (query.where) conditions.push(compileWhere(query.where, field, (key) => multipleFields.has(key)));
+    const search = (query.search ?? '').trim().slice(0, 250);
     if (search) {
-      const pattern = `%${search}%`;
-      const parts: SQL[] = [sql`lower(${records.code}) LIKE ${pattern}`, sql`lower(${records.data}) LIKE ${pattern}`];
-      for (const field of def.fields) {
-        if (field.type !== 'ref' || !field.ref) continue;
-        const path = '$.' + field.key;
-        if (field.ref === 'users') {
-          parts.push(sql`EXISTS (SELECT 1 FROM users u WHERE u.id = json_extract(${records.data}, ${path}) AND lower(u.name) LIKE ${pattern})`);
+      const includes = (column: SQL) => sql`instr(lower(CAST(${column} AS TEXT)), lower(${search})) > 0`;
+      const parts: SQL[] = [includes(sql`${records.code}`)];
+      for (const spec of def.fields) {
+        if (!allowed.has(spec.key) || spec.hidden || ['section', 'formula', 'rows', 'file'].includes(spec.type)) continue;
+        const value = field(spec.key);
+        if (spec.type !== 'ref' || !spec.ref) {
+          parts.push(includes(value));
+          continue;
+        }
+        if (spec.ref === 'users') {
+          if (this.access.canPickUsers(user)) parts.push(sql`EXISTS (SELECT 1 FROM users u WHERE u.active = 1 AND u.id = ${value} AND ${includes(sql`u.name`)})`);
         } else {
-          const refDef = findEntity(field.ref);
-          if (!refDef || refDef.title === 'code') continue;
-          parts.push(
-            sql`EXISTS (SELECT 1 FROM records r2 WHERE r2.id = json_extract(${records.data}, ${path}) AND (lower(r2.code) LIKE ${pattern} OR lower(json_extract(r2.data, ${'$.' + refDef.title})) LIKE ${pattern}))`,
-          );
+          const refDef = findEntity(spec.ref);
+          if (!refDef || (def.custom && !this.access.canEntity(user, refDef.key, 'view'))) continue;
+          const target = alias(records, 'related_record');
+          const title = refDef.fields.find((candidate) => candidate.key === (spec.displayField ?? refDef.title));
+          const matchCode = includes(sql`${target.code}`);
+          const matchTitle = title && !title.sensitive
+            ? includes(sql`json_extract(${target.data}, ${'$.' + title.key})`) : sql`0 = 1`;
+          const relatedIds = this.db.select({ id: target.id }).from(target).where(and(
+            eq(target.entity, refDef.key), eq(target.deleted, false),
+            eq(target.workspaceId, currentWorkspaceId()),
+            this.scopeCondition(refDef, user, target), sql`(${matchCode} OR ${matchTitle})`,
+          ));
+          if (spec.multiple) {
+            parts.push(sql`EXISTS (SELECT 1 FROM json_each(${records.data}, ${'$.' + spec.key}) je
+              WHERE je.value IN (${relatedIds.getSQL()}))`);
+          } else {
+            parts.push(sql`${value} IN (${relatedIds.getSQL()})`);
+          }
         }
       }
       conditions.push(sql`(${sql.join(parts, sql` OR `)})`);
     }
     const where = and(...conditions);
     const total = Number(this.db.select({ value: sql<number>`count(*)` }).from(records).where(where).all()[0]?.value ?? 0);
-    const pageSize = Math.min(Math.max(Number(query.pageSize) || 50, 1), 500);
+    const pageSize = Math.min(Math.max(Math.trunc(Number(query.pageSize)) || 50, 1), 500);
     const pages = Math.max(1, Math.ceil(total / pageSize));
-    const page = Math.min(Math.max(Number(query.page) || 1, 1), pages);
-    const sort = String(query.sort || '-_createdAt');
-    const desc = sort.startsWith('-');
-    const key = sort.replace(/^-/, '');
-    const expression =
-      key === 'code'
-        ? sql`${records.code}`
-        : key === '_updatedAt'
-          ? sql`${records.updatedAt}`
-          : key === '_createdAt'
-            ? sql`${records.createdAt}`
-            : allowed.has(key)
-              ? sql`json_extract(${records.data}, ${'$.' + key})`
-              : sql`${records.createdAt}`;
-    const order = desc ? sql`${expression} DESC` : sql`${expression} ASC`;
+    const page = Math.min(Math.max(Math.trunc(Number(query.page)) || 1, 1), pages);
+    const sort = (query.sort || '-_createdAt').split(',');
+    if (sort.length > 8) bad('เรียงได้สูงสุด 8 ฟิลด์');
+    const order = sort.map((entry) => {
+      const expression = sql`NULLIF(${field(entry.replace(/^-/, ''))}, '')`;
+      return entry.startsWith('-') ? sql`${expression} DESC NULLS LAST` : sql`${expression} ASC NULLS LAST`;
+    });
     const rows = this.db
       .select()
       .from(records)
       .where(where)
-      .orderBy(order)
+      .orderBy(...order, records.id)
       .limit(pageSize)
       .offset((page - 1) * pageSize)
       .all();
+    const aggregate = this.aggregate(def, where, field, query);
     return {
       total,
       page,
       pageSize,
       items: rows.map((row) => this.decorate(def, row as RawRecord, user)),
+      ...aggregate,
     };
+  }
+
+  /**
+   * Totals and group counts are computed over the whole filtered set, never the
+   * current page, so the grid never shows a page subtotal as the dataset total.
+   */
+  private aggregate(
+    def: EntityDef,
+    where: SQL | undefined,
+    field: (key: string) => SQL,
+    query: ListQuery,
+  ): { totals: Record<string, number>; groups: GroupSummary[]; groupsTruncated: boolean } {
+    const list = (raw: string | undefined): string[] =>
+      [...new Set(String(raw ?? '').split(',').map((item) => item.trim()).filter(Boolean))];
+    const totalsFields = list(query.totals);
+    const groupFields = list(query.groupBy);
+    if (totalsFields.length > 5) bad('ยอดรวมได้สูงสุด 5 ฟิลด์');
+    if (groupFields.length > 2) bad('จัดกลุ่มได้สูงสุด 2 ระดับ');
+    const numeric = (key: string): boolean =>
+      (key === 'amount' && def.key === 'purchaseOrders') ||
+      def.fields.some((item) => item.key === key && item.type === 'number');
+    for (const key of totalsFields) {
+      if (!numeric(key)) bad(`ยอดรวมใช้ได้กับฟิลด์ตัวเลขเท่านั้น ("${key}")`);
+    }
+    for (const key of groupFields) field(key);
+    const sums = (keys: string[], aliased: boolean): Record<string, SQL.Aliased<number>> => {
+      const out: Record<string, SQL.Aliased<number>> = {};
+      for (const key of keys) {
+        const name = `sum_${key}`;
+        const expression = sql<number>`COALESCE(SUM(CAST(${field(key)} AS REAL)), 0)`;
+        out[name] = aliased ? expression.as(name) : expression.as(name);
+      }
+      return out;
+    };
+    let totals: Record<string, number> = {};
+    if (totalsFields.length) {
+      const selected = sums(totalsFields, true);
+      const row: unknown = this.db.select(selected).from(records).where(where).all()[0];
+      const record = row && typeof row === 'object' ? row as Record<string, unknown> : {};
+      totals = Object.fromEntries(totalsFields.map((key) => [key, Number(record[`sum_${key}`] ?? 0)]));
+    }
+    if (!groupFields.length) return { totals, groups: [], groupsTruncated: false };
+    const selected: Record<string, SQL.Aliased<number> | SQL.Aliased<string | null>> = {
+      count: sql<number>`count(*)`.as('count'),
+      ...sums(totalsFields, true),
+    };
+    groupFields.forEach((key, index) => {
+      selected[`g${index}`] = sql<string | null>`${field(key)}`.as(`g${index}`);
+    });
+    const grouped = this.db.select(selected).from(records).where(where)
+      .groupBy(...groupFields.map((key) => field(key)))
+      .orderBy(sql`count(*) DESC`, ...groupFields.map((key) => field(key)))
+      .limit(201)
+      .all();
+    const groups: GroupSummary[] = grouped.slice(0, 200).map((row) => {
+      const record = row as Record<string, unknown>;
+      return {
+        keys: groupFields.map((key, index) => {
+          const value = record[`g${index}`];
+          if (value === null || value === undefined) return null;
+          const type = def.fields.find((item) => item.key === key)?.type;
+          if (type === 'boolean') return value === true || value === 1 || value === '1';
+          if (type === 'number') return Number(value);
+          return String(value);
+        }),
+        count: Number(record['count'] ?? 0),
+        totals: Object.fromEntries(totalsFields.map((key) => [key, Number(record[`sum_${key}`] ?? 0)])),
+      };
+    });
+    return { totals, groups, groupsTruncated: grouped.length > 200 };
   }
 
   get(user: SafeUser, entityKey: string, id: string): DecoratedRecord {
@@ -232,6 +358,8 @@ export class RecordsService {
 
     const data = this.sanitize(def, values);
     this.guardCreate(def, data, options);
+    this.guardArchivedOptions(def, {}, data);
+    this.guardOptionAccess(def, {}, data, user, !!options.system);
     for (const [key, value] of Object.entries(this.defaultsFor(def))) {
       if (data[key] === undefined || data[key] === '') data[key] = value;
     }
@@ -244,6 +372,7 @@ export class RecordsService {
     return this.db.transaction(() => {
       const row: typeof records.$inferInsert = {
         id: crypto.randomUUID(),
+        workspaceId: currentWorkspaceId(),
         entity: def.key,
         code,
         data,
@@ -254,6 +383,7 @@ export class RecordsService {
         updatedAt: now,
       };
       this.db.insert(records).values(row).run();
+      this.syncMirrors(def, row.id, {}, data);
       const decorated = this.decorate(def, row as RawRecord, user);
       this.audit.log(options.actor ?? user, {
         action: 'create',
@@ -314,20 +444,26 @@ export class RecordsService {
     if (!row) notFound('ไม่พบรายการ');
     if (row.deleted) bad('รายการนี้ถูกยกเลิก/ซ่อนแล้ว');
     if (!options.system) this.access.requireSee(user, def, row);
+    const conflict = () => new ConflictException('รายการถูกแก้ไขแล้ว กรุณาตรวจค่าล่าสุดก่อนบันทึกอีกครั้ง');
+    if (options.expectedUpdatedAt !== undefined && row.updatedAt !== options.expectedUpdatedAt) throw conflict();
 
     const before = { ...row.data };
     const patch = this.sanitize(def, changes);
     this.guardUpdate(def, row, patch, user, options);
+    this.guardArchivedOptions(def, row.data, patch);
+    this.guardOptionAccess(def, row.data, patch, user, !!options.system);
     const next = { ...row.data, ...patch };
     this.validate(def, next, user, id);
     this.validateBusiness(def, next, id);
-    const now = nowIso();
+    const now = new Date(Math.max(Date.now(), (Date.parse(row.updatedAt) || 0) + 1)).toISOString();
     return this.db.transaction(() => {
-      this.db
+      const result = this.db
         .update(records)
         .set({ data: next, updatedAt: now, updatedBy: options.actor?.id ?? user.id })
-        .where(eq(records.id, id))
+        .where(and(eq(records.id, id), eq(records.updatedAt, row.updatedAt)))
         .run();
+      if (!result.changes) throw conflict();
+      this.syncMirrors(def, id, before, next);
 
       const after = this.decorate(def, { ...row, data: next, updatedAt: now } as RawRecord, user);
       const diff = options.changes ?? this.diff(def, before, next);
@@ -365,6 +501,51 @@ export class RecordsService {
   }
 
   /** Reject status changes that are only allowed through approve/decision endpoints. */
+  /** Archived options stay readable on existing records but cannot be newly selected. */
+  private guardArchivedOptions(def: EntityDef, previous: Record<string, unknown>, patch: Record<string, unknown>): void {
+    for (const field of def.fields) {
+      if (field.type !== 'select' && field.type !== 'multiselect') continue;
+      if (!field.optionMeta?.length) continue;
+      if (!Object.prototype.hasOwnProperty.call(patch, field.key)) continue;
+      const archived = new Set(field.optionMeta.filter((option) => option.archived).map((option) => option.id));
+      if (!archived.size) continue;
+      const asList = (value: unknown): string[] => Array.isArray(value)
+        ? value.map(String)
+        : value === undefined || value === null || value === '' ? [] : [String(value)];
+      const next = asList(patch[field.key]);
+      const before = new Set(asList(previous[field.key]));
+      const added = next.filter((value) => !before.has(value));
+      if (added.some((value) => archived.has(value))) {
+        bad(`"${field.label}" มีตัวเลือกที่ถูกเก็บถาวรแล้ว จึงเลือกใหม่ไม่ได้`);
+      }
+    }
+  }
+
+  /** Options can be limited to roles; only newly selected values are checked. */
+  private guardOptionAccess(
+    def: EntityDef,
+    previous: Record<string, unknown>,
+    patch: Record<string, unknown>,
+    user: SafeUser,
+    system: boolean,
+  ): void {
+    if (system || user.isAdmin) return;
+    const asList = (value: unknown): string[] => Array.isArray(value)
+      ? value.map(String)
+      : value === undefined || value === null || value === '' ? [] : [String(value)];
+    for (const field of def.fields) {
+      if (field.type !== 'select' && field.type !== 'multiselect') continue;
+      if (!field.optionMeta?.some((option) => option.roles?.length)) continue;
+      if (!Object.prototype.hasOwnProperty.call(patch, field.key)) continue;
+      const before = new Set(asList(previous[field.key]));
+      const blocked = asList(patch[field.key])
+        .filter((value) => !before.has(value))
+        .map((value) => field.optionMeta?.find((option) => option.id === value))
+        .filter((option): option is NonNullable<typeof option> => !!option?.roles?.length && !option.roles.includes(user.roleId));
+      if (blocked.length) bad(`"${field.label}": ไม่มีสิทธิ์เลือกตัวเลือก "${blocked[0].label}"`);
+    }
+  }
+
   private guardCreate(def: EntityDef, data: Record<string, unknown>, options: CreateOptions): void {
     if (options.system || def.key !== 'vehicleBookings') return;
     const status = String(data['status'] ?? '');
@@ -547,7 +728,11 @@ export class RecordsService {
       }
       for (const field of fields) {
         const linked = rows
-          .filter((row) => !row.deleted && String(row.data[field.key] ?? '') === id)
+          .filter((row) => {
+            if (row.deleted) return false;
+            const value = row.data[field.key];
+            return Array.isArray(value) ? value.map(String).includes(id) : String(value ?? '') === id;
+          })
           .slice(0, 20)
           .map((row) => {
             const refField = other.fields.find((item) => item.type === 'ref' && item.ref && row.data[item.key]);
@@ -583,6 +768,7 @@ export class RecordsService {
       .set({ deleted: true, deletedAt: now, deletedBy: user.id, deletedReason: reason.trim(), updatedAt: now, updatedBy: user.id })
       .where(eq(records.id, id))
       .run();
+    this.syncMirrors(def, id, row.data, null);
     const decorated = this.decorate(def, { ...row, deleted: true, deletedAt: now, deletedReason: reason.trim() } as RawRecord, user);
     this.audit.log(user, {
       action: 'archive',
@@ -614,6 +800,7 @@ export class RecordsService {
       .set({ deleted: false, deletedAt: null, deletedBy: null, deletedReason: null, updatedAt: now, updatedBy: user.id })
       .where(eq(records.id, id))
       .run();
+    this.syncMirrors(def, id, {}, row.data);
     const decorated = this.decorate(def, { ...row, deleted: false, deletedAt: null, deletedReason: null } as RawRecord, user);
     this.audit.log(user, {
       action: 'restore',
@@ -670,8 +857,17 @@ export class RecordsService {
     const labels: Record<string, string> = {};
     const rowLabels: Record<string, Array<Record<string, string>>> = {};
     for (const field of def.fields) {
-      if (field.type === 'ref' && typeof data[field.key] === 'string' && data[field.key]) {
-        labels[field.key] = this.labelOf(field.ref ?? '', data[field.key] as string, user);
+      if (field.type === 'ref') {
+        const raw = data[field.key];
+        if (field.multiple) {
+          const ids = Array.isArray(raw) ? raw.map(String) : [];
+          const labelsOf = ids
+            .map((id) => this.labelOf(field.ref ?? '', id, user))
+            .filter((label) => !!label && !label.startsWith('(ไม่'));
+          labels[field.key] = labelsOf.join(', ');
+        } else if (typeof raw === 'string' && raw) {
+          labels[field.key] = this.labelOf(field.ref ?? '', raw, user);
+        }
       }
       if (field.type === 'rows' && Array.isArray(data[field.key])) {
         rowLabels[field.key] = (data[field.key] as Record<string, unknown>[]).map((line) => {
@@ -730,9 +926,9 @@ export class RecordsService {
     // concurrent creates cannot read the same previous value.
     const row = this.db
       .insert(counters)
-      .values({ entity: def.key, value: 1 })
+      .values({ workspaceId: currentWorkspaceId(), entity: def.key, value: 1 })
       .onConflictDoUpdate({
-        target: counters.entity,
+        target: [counters.workspaceId, counters.entity],
         set: { value: sql`${counters.value} + 1` },
       })
       .returning({ value: counters.value })
@@ -741,10 +937,54 @@ export class RecordsService {
     return `${def.prefix}-${String(value).padStart(4, '0')}`;
   }
 
+  /** Relation ids from a stored value: single refs are one id, multi-links are arrays. */
+  private mirrorIds(value: unknown): string[] {
+    if (Array.isArray(value)) return value.map(String).filter(Boolean);
+    if (typeof value === 'string' && value) return [value];
+    return [];
+  }
+
+  /**
+   * A relation is edited on one side only; the reverse field (created with
+   * `mirror`) is kept in step here so both datasets show the same links.
+   */
+  private syncMirrors(def: EntityDef, recordId: string, before: Record<string, unknown>, after: Record<string, unknown> | null): void {
+    for (const field of def.fields) {
+      if (field.type !== 'ref' || !field.ref || field.ref === 'users') continue;
+      const previous = this.mirrorIds(before[field.key]);
+      const next = this.mirrorIds(after?.[field.key]);
+      if (previous.length === next.length && previous.every((id) => next.includes(id))) continue;
+      const added = next.filter((id) => !previous.includes(id));
+      const removed = previous.filter((id) => !next.includes(id));
+      if (!added.length && !removed.length) continue;
+      for (const targetDef of Object.values(ENTITY_DEFS)) {
+        if (targetDef.key !== field.ref) continue;
+        const mirrors = targetDef.fields.filter((item) => item.mirror?.entity === def.key && item.mirror.field === field.key);
+        if (!mirrors.length) continue;
+        for (const mirror of mirrors) {
+          for (const targetId of [...new Set([...added, ...removed])]) {
+            const target = this.rawGet(targetDef.key, targetId);
+            if (!target) continue;
+            const current = this.mirrorIds(target.data[mirror.key]);
+            const wanted = added.includes(targetId)
+              ? (current.includes(recordId) ? current : [...current, recordId])
+              : current.filter((id) => id !== recordId);
+            if (wanted.length === current.length && wanted.every((id, index) => id === current[index])) continue;
+            const updatedAt = new Date(Math.max(Date.now(), (Date.parse(target.updatedAt) || 0) + 1)).toISOString();
+            this.db.update(records)
+              .set({ data: { ...target.data, [mirror.key]: wanted }, updatedAt })
+              .where(and(eq(records.id, target.id), eq(records.workspaceId, currentWorkspaceId())))
+              .run();
+          }
+        }
+      }
+    }
+  }
+
   private sanitize(def: EntityDef, values: Record<string, unknown>): Record<string, unknown> {
     const out: Record<string, unknown> = {};
     for (const field of def.fields) {
-      if (field.readOnly || field.type === 'section' || field.type === 'formula') continue;
+      if (field.readOnly || field.archived || field.type === 'section' || field.type === 'formula') continue;
       if (!Object.prototype.hasOwnProperty.call(values, field.key)) continue;
       out[field.key] = this.coerce(field, values[field.key]);
     }
@@ -776,10 +1016,14 @@ export class RecordsService {
         return typeof value === 'string' ? value.trim() : String(value);
       case 'textarea':
       case 'select':
-      case 'ref':
       case 'date':
       case 'datetime':
         return typeof value === 'string' ? value : String(value);
+      case 'ref':
+        if (!field.multiple) return typeof value === 'string' ? value : String(value);
+        return Array.isArray(value)
+          ? [...new Set(value.map(String).filter(Boolean))]
+          : [String(value)];
       default:
         return value;
     }
@@ -828,7 +1072,7 @@ export class RecordsService {
         const conflict = this.db
           .select()
           .from(records)
-          .where(eq(records.entity, 'vehicleBookings'))
+          .where(and(eq(records.entity, 'vehicleBookings'), eq(records.workspaceId, currentWorkspaceId())))
           .all()
           .find((row) => {
             if (row.deleted || row.id === selfId) return false;
@@ -874,6 +1118,7 @@ export class RecordsService {
 
   private validate(def: EntityDef, data: Record<string, unknown>, user: SafeUser, selfId: string | null): void {    const errors: Record<string, string> = {};
     for (const field of def.fields) {
+      if (field.archived) continue;
       if (!this.visible(field, data)) continue;
       const value = data[field.key];
       const label = field.label;
@@ -892,9 +1137,17 @@ export class RecordsService {
         case 'number': {
           const n = Number(value);
           if (!Number.isFinite(n)) errors[field.key] = `"${label}" ต้องเป็นตัวเลข`;
-          else if (n < 0 && field.key !== 'lat' && field.key !== 'lng') errors[field.key] = `"${label}" ต้องไม่ติดลบ`;
+          else if (field.min !== undefined && n < field.min) errors[field.key] = `"${label}" ต้องไม่น้อยกว่า ${field.min}`;
+          else if (field.max !== undefined && n > field.max) errors[field.key] = `"${label}" ต้องไม่เกิน ${field.max}`;
+          else if (field.decimals !== undefined && Math.abs(n * 10 ** field.decimals - Math.round(n * 10 ** field.decimals)) > 1e-6) {
+            errors[field.key] = `"${label}" ทศนิยมได้ไม่เกิน ${field.decimals} ตำแหน่ง`;
+          } else if (field.min === undefined && n < 0 && field.key !== 'lat' && field.key !== 'lng') errors[field.key] = `"${label}" ต้องไม่ติดลบ`;
           break;
         }
+        case 'text':
+        case 'textarea':
+          if (field.maxLength !== undefined && String(value).length > field.maxLength) errors[field.key] = `"${label}" ยาวได้ไม่เกิน ${field.maxLength} ตัวอักษร`;
+          break;
         case 'date':
           if (!isDateOnly(value)) errors[field.key] = `"${label}" ไม่ใช่วันที่ที่ถูกต้อง (YYYY-MM-DD)`;
           break;
@@ -916,7 +1169,22 @@ export class RecordsService {
           break;
         }
         case 'ref':
-          if (!this.refExists(field.ref ?? '', String(value), user)) errors[field.key] = `"${label}" ไม่พบรายการที่เลือก`;
+          if (field.multiple) {
+            const items = Array.isArray(value) ? value : null;
+            if (!items) {
+              errors[field.key] = `"${label}" ต้องเป็นรายการที่เชื่อมโยง`;
+            } else if (items.length > 50) {
+              errors[field.key] = `"${label}" เชื่อมได้สูงสุด 50 รายการ`;
+            } else if (items.some((item) => typeof item !== 'string' || !item)) {
+              errors[field.key] = `"${label}" มีรหัสรายการที่ไม่ถูกต้อง`;
+            } else if (new Set(items).size !== items.length) {
+              errors[field.key] = `"${label}" มีรายการซ้ำ`;
+            } else if (items.some((item) => !this.refExists(field.ref ?? '', item, user))) {
+              errors[field.key] = `"${label}" ไม่พบรายการที่เลือก`;
+            }
+          } else if (!this.refExists(field.ref ?? '', String(value), user)) {
+            errors[field.key] = `"${label}" ไม่พบรายการที่เลือก`;
+          }
           break;
         case 'rows': {
           const lines = Array.isArray(value) ? (value as Record<string, unknown>[]) : [];

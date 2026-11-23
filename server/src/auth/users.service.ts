@@ -4,7 +4,7 @@ import { hash } from 'bcryptjs';
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import type { Db } from '../db/database.service.js';
-import { roles, settings, users, type Perms } from '../db/schema.js';
+import { roles, settings, userWorkspaces, users, type Perms } from '../db/schema.js';
 import { bad, forbidden, notFound } from '../common/exceptions.js';
 import type { SafeUser } from './user.types.js';
 import { nowIso } from '../common/dates.js';
@@ -46,6 +46,7 @@ export class UsersService {
       isAdmin: !!role?.isAdmin,
       scope: role?.scope ?? 'all',
       perms: (role?.perms ?? {}) as Perms,
+      activeWorkspaceId: row.activeWorkspaceId,
     };
   }
 
@@ -158,10 +159,15 @@ export class UsersService {
       projectIds: this.stringList(input.projectIds, 'โครงการ', []),
       siteIds: this.stringList(input.siteIds, 'ไซต์', []),
       active: this.booleanValue(input.active, 'สถานะใช้งาน', true),
+      activeWorkspaceId: 'default',
       createdAt: now,
       updatedAt: now,
     };
     this.db.insert(users).values(row).run();
+    const workspaceId = actor?.activeWorkspaceId ?? 'default';
+    for (const id of new Set(['default', workspaceId])) {
+      this.db.insert(userWorkspaces).values({ userId: row.id, workspaceId: id }).onConflictDoNothing().run();
+    }
     return this.safe(row as typeof users.$inferSelect);
   }
 

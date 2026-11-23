@@ -8,25 +8,28 @@ export class MetaService {
   readonly meta = signal<MetaResponse | null>(null);
   readonly loading = signal(false);
   private readonly optionCache = new Map<string, Option[]>();
-  private started = false;
+  readonly failed = signal(false);
   private request$: Observable<MetaResponse> | null = null;
 
   constructor(private readonly api: ApiService) {}
 
   /** Loads metadata once and lets guards await it before activation. */
-  ensureLoaded(): Observable<MetaResponse> {
+  ensureLoaded(force = false): Observable<MetaResponse> {
     const current = this.meta();
-    if (current) return of(current);
+    if (!force && current) return of(current);
     if (!this.request$) {
       this.loading.set(true);
+      this.failed.set(false);
       this.request$ = this.api.get<MetaResponse>('/meta').pipe(
         tap({
           next: (meta) => {
             this.meta.set(meta);
             this.loading.set(false);
+            this.request$ = null;
           },
           error: () => {
             this.loading.set(false);
+            this.failed.set(true);
             this.request$ = null;
           },
         }),
@@ -37,10 +40,7 @@ export class MetaService {
   }
 
   load(force = false): void {
-    if (this.started && !force) return;
-    this.started = true;
-    if (force) this.request$ = null;
-    this.ensureLoaded().subscribe({ error: () => undefined });
+    this.ensureLoaded(force).subscribe({ error: () => undefined });
   }
 
   entity(key: string): EntityDef | undefined {
@@ -71,11 +71,13 @@ export class MetaService {
     return this.meta()?.lists ?? { teams: [], depts: [] };
   }
 
-  options(entity: string): Observable<Option[]> {
-    const cached = this.optionCache.get(entity);
+  options(entity: string, filter?: { field: string; value: string }): Observable<Option[]> {
+    const key = filter?.value ? `${entity}|${filter.field}|${filter.value}` : entity;
+    const cached = this.optionCache.get(key);
     if (cached) return of(cached);
-    return this.api.get<Option[]>(`/meta/options/${entity}`).pipe(
-      tap((options) => this.optionCache.set(entity, options)),
+    const params = filter?.value ? { filterField: filter.field, filterValue: filter.value } : undefined;
+    return this.api.get<Option[]>(`/meta/options/${entity}`, params).pipe(
+      tap((options) => this.optionCache.set(key, options)),
     );
   }
 

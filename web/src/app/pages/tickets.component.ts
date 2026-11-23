@@ -28,6 +28,8 @@ import type { ListResponse, RecordRow, WorkflowStatus } from '../core/models';
         [filters]="filters()"
         [initialTab]="'open'"
         [exportName]="'tickets'"
+        [viewsEntity]="'tickets'"
+        [canShareViews]="auth.can('settings', 'edit')"
         [canExport]="auth.can('tickets', 'export')"
         [searchPlaceholder]="'ค้นหาเลขที่ หัวข้อ อาการ จุดติดตั้ง วงจร…'"
         [emptyText]="'ยังไม่มีเคสแจ้งซ่อม'"

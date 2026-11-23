@@ -86,7 +86,7 @@ const TYPES: [string, string][] = [
       }
 
       @if (tab() === 'moves') {
-        <app-data-table [columns]="moveColumns()" [rows]="moves()" [exportName]="'stock-moves'" [canExport]="auth.can('warehouse','export')" [emptyText]="'ยังไม่มีรายการเคลื่อนไหว'" [error]="movesError()" [rowClass]="rowClass" (retry)="load()" />
+        <app-data-table [columns]="moveColumns()" [rows]="moves()" [exportName]="'stock-moves'" [viewsEntity]="'stockMoves'" [canShareViews]="auth.can('settings', 'edit')" [canExport]="auth.can('warehouse','export')" [emptyText]="'ยังไม่มีรายการเคลื่อนไหว'" [error]="movesError()" [rowClass]="rowClass" (retry)="load()" />
       }
 
       @if (tab() === 'wh') {

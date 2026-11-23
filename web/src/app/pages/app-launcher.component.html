@@ -1,0 +1,91 @@
+<section aria-labelledby="apps-title" class="launcher">
+  <header class="launcher-head">
+    <div>
+      <h1 id="apps-title">แอปทั้งหมด <span lang="en">All apps</span></h1>
+      <p class="muted">ค้นหาพื้นที่งานและเปิดชุดข้อมูลที่คุณมีสิทธิ์เข้าถึง</p>
+    </div>
+    @if (context().canCreate) {
+      <a class="btn primary" routerLink="/settings" [queryParams]="{ tab: 'metadata', create: '1' }">
+        <app-icon name="plus" [size]="16" /> เพิ่มโมดูล
+      </a>
+    }
+  </header>
+
+  @if (context().loading) {
+    <p class="state" role="status">กำลังโหลดโมดูล…</p>
+  } @else if (context().failed) {
+    <div class="state">
+      <p role="alert">โหลดรายการโมดูลไม่ได้</p>
+      <button type="button" class="btn" (click)="context().retry()">ลองใหม่</button>
+    </div>
+  } @else if (!context().items.length) {
+    <p class="state">ยังไม่มีโมดูลที่คุณเปิดได้ หากต้องการเข้าถึงพื้นที่งาน ให้ติดต่อผู้ดูแลระบบ</p>
+  } @else {
+    <div class="launcher-tools">
+      <div class="field">
+        <label for="app-search">ค้นหาโมดูล</label>
+        <input id="app-search" type="search" [value]="query()" (input)="setQuery(search.value)" #search placeholder="ชื่อไทย ชื่ออังกฤษ หรือรหัสโมดูล" />
+      </div>
+      <div class="field">
+        <label for="app-category">หมวดงาน</label>
+        <select id="app-category" [value]="category()" (change)="setCategory(categorySelect.value)" #categorySelect>
+          <option value="">ทุกหมวด</option>
+          @for (group of categories(); track group) { <option [value]="group">{{ group }}</option> }
+        </select>
+      </div>
+    </div>
+
+    @if (browsing() && favorites().length) {
+      <section aria-labelledby="apps-favorites">
+        <h2 id="apps-favorites">รายการโปรด</h2>
+        <ul class="launcher-shortcuts">
+          @for (item of favorites(); track item.path) {
+            <li><a class="btn" [routerLink]="item.path"><app-icon [name]="item.icon" [size]="16" /> {{ item.label }}</a></li>
+          }
+        </ul>
+      </section>
+    }
+    @if (browsing() && recent().length) {
+      <section aria-labelledby="apps-recent">
+        <h2 id="apps-recent">เปิดล่าสุด</h2>
+        <ul class="launcher-shortcuts">
+          @for (item of recent(); track item.path) {
+            <li><a class="btn" [routerLink]="item.path"><app-icon [name]="item.icon" [size]="16" /> {{ item.label }}</a></li>
+          }
+        </ul>
+      </section>
+    }
+
+    <section aria-labelledby="apps-results">
+      <div class="launcher-head">
+        <h2 id="apps-results">{{ browsing() ? 'โมดูลทั้งหมด' : 'ผลการค้นหา' }}</h2>
+        <span class="muted" role="status">{{ items().length }} จาก {{ filtered().length }} โมดูล</span>
+      </div>
+      @if (!items().length) {
+        <div class="state">
+          <p>ไม่พบโมดูลที่ตรงกับคำค้นหรือหมวดที่เลือก</p>
+          <button type="button" class="btn" (click)="setQuery(''); setCategory(''); search.focus()">ล้างคำค้นและหมวด</button>
+        </div>
+      } @else {
+        <ul class="launcher-grid">
+          @for (item of items(); track item.path) {
+            <li class="card launcher-card">
+              <a [routerLink]="item.path" class="launcher-link">
+                <app-icon [name]="item.icon" [size]="20" />
+                <span><strong>{{ item.label }}</strong><small class="muted">{{ item.group }}</small></span>
+              </a>
+              <button type="button" class="icon-btn launcher-pin" [attr.aria-pressed]="context().favorites.includes(item.path)"
+                [attr.aria-label]="'ปักหมุด ' + item.label" (click)="context().toggleFavorite(item.path)">
+                <app-icon name="pin" [size]="16" />
+              </button>
+              @if (item.description) { <p class="muted">{{ item.description }}</p> }
+            </li>
+          }
+        </ul>
+        @if (items().length < filtered().length) {
+          <button type="button" class="btn" (click)="loadMore()">โหลดเพิ่ม</button>
+        }
+      }
+    </section>
+  }
+</section>

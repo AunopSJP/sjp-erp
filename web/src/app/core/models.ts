@@ -48,16 +48,38 @@ export interface FieldDef {
   required?: boolean;
   unique?: boolean;
   options?: string[];
+  optionMeta?: OptionDef[];
   optionsFrom?: string;
   ref?: string;
+  multiple?: boolean;
+  displayField?: string;
   cols?: RowColumn[];
   hidden?: boolean;
   showIf?: { field: string; value: unknown };
   suffix?: string;
+  decimals?: number;
+  min?: number;
+  max?: number;
+  currency?: string;
+  maxLength?: number;
   help?: string;
   wide?: boolean;
   readOnly?: boolean;
+  sensitive?: boolean;
   formula?: string;
+  archived?: boolean;
+  mirror?: { entity: string; field: string };
+  optionFilter?: { by: string; targetField: string };
+}
+
+export type OptionColor = 'gray' | 'red' | 'amber' | 'green' | 'blue';
+
+export interface OptionDef {
+  id: string;
+  label: string;
+  color?: OptionColor;
+  archived?: boolean;
+  roles?: string[];
 }
 
 export interface EntityDef {
@@ -72,10 +94,12 @@ export interface EntityDef {
   scoped?: boolean;
   system?: boolean;
   custom?: boolean;
+  status?: 'draft' | 'published' | 'archived';
   group?: string;
   navLabel?: string;
   icon?: string;
   description?: string;
+  aliases?: string[];
   workflowKey?: string;
   can?: Record<string, boolean>;
 }
@@ -134,6 +158,7 @@ export interface ProjectStepDef {
   approverRole?: string;
   approverUser?: string;
   source?: string;
+  tracks?: string[];
 }
 
 export interface WorkflowDef {
@@ -182,6 +207,8 @@ export interface ListResponse<T = RecordRow> {
 export interface Option {
   value: string;
   label: string;
+  color?: OptionColor;
+  archived?: boolean;
 }
 
 export interface AuthResult {

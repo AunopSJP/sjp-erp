@@ -1,0 +1,46 @@
+<label class="kb-search">ค้นหาในกระดาน
+  <input type="search" [value]="query()" (input)="query.set(search.value)" #search [disabled]="!!busy()" />
+</label>
+<p class="kb-notice" role="status" aria-live="polite">{{ notice() }}</p>
+@if (!activeLanes().length) {
+  <p class="state">ชุดข้อมูลนี้ยังไม่มีฟิลด์สถานะที่ใช้กับกระดาน ให้ตั้งค่า Workflow หรือกลับมุมมองตาราง</p>
+} @else {
+  <div class="kb-board" tabindex="0" aria-label="กระดานตามสถานะ">
+    @for (lane of activeLanes(); track lane.key) {
+      <section class="card kb-lane" [attr.data-lane]="lane.key" [class.kb-drop]="dragOver() === lane.key"
+        [attr.aria-label]="lane.label" (dragover)="allowDrop($event, lane.key)" (drop)="drop($event, lane.key)">
+        <header><h2>{{ lane.label }}</h2><span class="badge {{ lane.color }}">{{ state(lane.key).total }}</span></header>
+        @for (row of state(lane.key).items; track row.id) {
+          <article class="kb-card" [attr.data-card]="row.id" [draggable]="targets(lane).length > 0 && !busy()"
+            (dragstart)="startDrag($event, row)" (dragend)="endDrag()">
+            <a [href]="rowHref()(row)">{{ row['code'] || row.id }}</a>
+            <dl>
+              @for (column of previewColumns(); track column.key) {
+                <div><dt>{{ column.label }}</dt><dd>{{ cell(row, column) }}</dd></div>
+              }
+            </dl>
+            @if (targets(lane).length) {
+              <select [disabled]="!!busy()" [attr.aria-label]="'ย้าย ' + row['code'] + ' ไปสถานะ'" (change)="changeStatus($event, row)">
+                <option value="">{{ busy() === row.id ? 'กำลังบันทึก…' : 'ย้ายไปสถานะ…' }}</option>
+                @for (target of targets(lane); track target.key) { <option [value]="target.key">{{ target.label }}</option> }
+              </select>
+            }
+            @if (failure(); as error) {
+              @if (error.id === row.id) { <p class="kb-error" role="alert">{{ error.message }}</p> }
+            }
+          </article>
+        }
+        @if (state(lane.key).loading) {
+          <p role="status">กำลังโหลด…</p>
+        } @else if (state(lane.key).error) {
+          <p role="alert">{{ state(lane.key).error }}</p>
+          <button type="button" class="btn sm" (click)="loadLane(lane.key, state(lane.key).page ? state(lane.key) : undefined)">ลองใหม่</button>
+        } @else if (!state(lane.key).items.length) {
+          <p class="muted">ไม่มีรายการ</p>
+        } @else if (state(lane.key).items.length < state(lane.key).total) {
+          <button type="button" class="btn sm" (click)="loadLane(lane.key, state(lane.key))">โหลดเพิ่ม</button>
+        }
+      </section>
+    }
+  </div>
+}

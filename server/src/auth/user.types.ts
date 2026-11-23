@@ -14,4 +14,5 @@ export interface SafeUser {
   isAdmin: boolean;
   scope: string;
   perms: Perms;
+  activeWorkspaceId: string;
 }

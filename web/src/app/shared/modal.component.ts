@@ -4,8 +4,8 @@ import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, EventEmi
   selector: 'app-modal',
   standalone: true,
   template: `
-    <div class="modal-back" (mousedown)="onBackdrop($event)">
-      <div #dialog class="modal" [class.wide]="wide" role="dialog" aria-modal="true" tabindex="-1" [attr.aria-label]="title"
+    <div class="modal-back" [class.aside-back]="side" (mousedown)="onBackdrop($event)">
+      <div #dialog class="modal" [class.wide]="wide" [class.modal-aside]="side" role="dialog" aria-modal="true" tabindex="-1" [attr.aria-label]="title"
         (pointerup)="endDrag()"
         (pointercancel)="endDrag()">
         <div
@@ -25,11 +25,20 @@ import { AfterViewInit, ChangeDetectionStrategy, Component, ElementRef, EventEmi
       </div>
     </div>
   `,
+  styles: [`
+    .aside-back { align-items: stretch; justify-content: flex-end; padding: 0; }
+    .modal.modal-aside { max-width: 540px; height: 100%; max-height: 100dvh; border-radius: 0; }
+    .modal.modal-aside .modal-body { flex: 1; }
+    @media (max-width: 760px) {
+      .modal.modal-aside { max-width: none; height: auto; max-height: 92dvh; margin-top: auto; border-radius: 18px 18px 0 0; }
+    }
+  `],
   changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class ModalComponent implements AfterViewInit, OnDestroy {
   @Input() title = '';
   @Input() wide = false;
+  @Input() side = false;
   @Output() closed = new EventEmitter<void>();
 
   private readonly host = inject(ElementRef) as ElementRef<HTMLElement>;
@@ -82,11 +91,10 @@ export class ModalComponent implements AfterViewInit, OnDestroy {
     const dialog = this.dialog;
     if (!dialog) return;
     dialog.classList.remove('dragging');
+    dialog.style.transform = '';
     if (shouldClose) {
       this.closed.emit();
-      return;
     }
-    dialog.style.transform = '';
   }
 
   @HostListener('document:keydown', ['$event'])
@@ -121,4 +129,3 @@ export class ModalComponent implements AfterViewInit, OnDestroy {
     )].filter((el): el is HTMLElement => el instanceof HTMLElement && el.offsetParent !== null);
   }
 }
-

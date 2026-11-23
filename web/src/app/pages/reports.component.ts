@@ -1,13 +1,14 @@
 import { ChangeDetectionStrategy, Component, OnInit, computed, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { ApiService, apiErrorMessage } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
 import { fmtDate, fmtDuration, fmtMoney } from '../core/util';
 import type { ColumnDef } from '../shared/data-table.component';
 import { DataTableComponent } from '../shared/data-table.component';
+import { ToastService } from '../shared/toast.service';
 import type { RecordRow } from '../core/models';
 
-type ReportName = 'tickets' | 'projects' | 'serials' | 'stock' | 'boq';
+type ReportName = 'tickets' | 'projects' | 'service-contracts' | 'revenue-share' | 'monthly-service' | 'serials' | 'stock' | 'boq';
 
 @Component({
   selector: 'app-reports',
@@ -23,7 +24,16 @@ type ReportName = 'tickets' | 'projects' | 'serials' | 'stock' | 'boq';
       @else if (loading()) { <div class="state"><div class="spinner"></div>กำลังโหลดรายงาน…</div> }
       @else if (!tabs().length) { <div class="state empty">ไม่มีรายงานที่คุณมีสิทธิ์ดู</div> }
       @else {
-        <app-data-table [columns]="columns()" [rows]="rows()" [exportName]="active()" [canExport]="auth.can('reports','export')" (rowClick)="open($event)" />
+        <app-data-table [columns]="columns()" [rows]="rows()" [exportName]="active()" [canExport]="auth.can('reports','export')" (rowClick)="open($event)">
+          @if (active() === 'monthly-service') {
+            <label class="small" style="display:inline-flex; align-items:center; gap:6px">เดือน
+              <input type="month" [value]="month()" (change)="setMonth($event)" aria-label="เดือนของรายงาน" />
+            </label>
+          }
+          @if (active() === 'monthly-service' || active() === 'revenue-share' || active() === 'service-contracts') {
+            <button type="button" class="btn tool" (click)="downloadPdf()">พิมพ์ PDF</button>
+          }
+        </app-data-table>
       }
     </div>
   `,
@@ -32,15 +42,21 @@ type ReportName = 'tickets' | 'projects' | 'serials' | 'stock' | 'boq';
 export class ReportsComponent implements OnInit {
   readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
+  private readonly toast = inject(ToastService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute);
 
   readonly active = signal<ReportName>('tickets');
   readonly rows = signal<RecordRow[]>([]);
   readonly loading = signal(false);
   readonly error = signal('');
+  readonly month = signal(new Date().toISOString().slice(0, 7));
   private readonly tabDefs: { name: ReportName; label: string; resource: string }[] = [
     { name: 'tickets', label: 'Ticket ทั้งหมด', resource: 'tickets' },
     { name: 'projects', label: 'โครงการ', resource: 'projects' },
+    { name: 'service-contracts', label: 'สัญญาบริการ', resource: 'projects' },
+    { name: 'revenue-share', label: 'ส่วนแบ่งรายได้', resource: 'projects' },
+    { name: 'monthly-service', label: 'บริการรายเดือน', resource: 'tickets' },
     { name: 'boq', label: 'BOQ เทียบจริง', resource: 'projects' },
     { name: 'serials', label: 'Serial/รับประกัน', resource: 'assets' },
     { name: 'stock', label: 'ยอดสต็อก', resource: 'warehouse' },
@@ -54,7 +70,9 @@ export class ReportsComponent implements OnInit {
 
   ngOnInit(): void {
     const allowed = this.tabs();
-    if (allowed.length && !allowed.some(([name]) => name === this.active())) this.active.set(allowed[0][0]);
+    const requested = this.route.snapshot.queryParamMap.get('report') as ReportName | null;
+    if (requested && allowed.some(([name]) => name === requested)) this.active.set(requested);
+    else if (allowed.length && !allowed.some(([name]) => name === this.active())) this.active.set(allowed[0][0]);
     this.load();
   }
 
@@ -71,7 +89,10 @@ export class ReportsComponent implements OnInit {
       return;
     }
     this.loading.set(true);
-    this.api.get<RecordRow[]>(`/reports/${this.active()}`).subscribe({
+    const path = this.active() === 'monthly-service'
+      ? `/reports/monthly-service?month=${encodeURIComponent(this.month())}`
+      : `/reports/${this.active()}`;
+    this.api.get<RecordRow[]>(path).subscribe({
       next: (rows) => {
         this.rows.set(rows);
         this.loading.set(false);
@@ -80,6 +101,31 @@ export class ReportsComponent implements OnInit {
         this.loading.set(false);
         this.error.set(apiErrorMessage(error));
       },
+    });
+  }
+
+  setMonth(event: Event): void {
+    this.month.set((event.target as HTMLInputElement).value || new Date().toISOString().slice(0, 7));
+    this.load();
+  }
+
+  /** ดาวน์โหลดรายงานปัจจุบันเป็น PDF (สร้างฝั่งเซิร์ฟเวอร์ด้วย headless browser) */
+  downloadPdf(): void {
+    const query = this.active() === 'monthly-service' ? `?month=${encodeURIComponent(this.month())}` : '';
+    const name = this.active() === 'monthly-service' ? `monthly-service-${this.month()}` : this.active();
+    this.api.blob(`/reports/${this.active()}/pdf${query}`).subscribe({
+      next: (blob) => {
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${name}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 3000);
+        this.toast.show('สร้าง PDF แล้ว');
+      },
+      error: (error: unknown) => this.toast.error(apiErrorMessage(error)),
     });
   }
 
@@ -102,9 +148,44 @@ export class ReportsComponent implements OnInit {
           { key: 'code', label: 'รหัส' }, { key: 'name', label: 'โครงการ' },
           { key: 'customer', label: 'ลูกค้า', value: (row) => row._labels?.['customer'] ?? '–' },
           { key: 'manager', label: 'ผู้จัดการ', value: (row) => row._labels?.['manager'] ?? '–' },
+          { key: 'track', label: 'เส้นทาง' },
+          { key: 'partner', label: 'คู่สัญญา' },
           { key: 'stepLabel', label: 'ขั้นตอนปัจจุบัน/สถานะ' },
           { key: 'done', label: 'ขั้นตอนที่เสร็จ' },
           { key: 'value', label: 'มูลค่า', value: (row) => fmtMoney(row['value']) },
+        ];
+      case 'service-contracts':
+        return [
+          { key: 'code', label: 'รหัส' }, { key: 'name', label: 'โครงการ' },
+          { key: 'customer', label: 'ลูกค้า', value: (row) => row._labels?.['customer'] ?? '–' },
+          { key: 'svcContract', label: 'เลขที่สัญญาบริการ' },
+          { key: 'svcStart', label: 'เริ่ม', value: (row) => fmtDate(row['svcStart']) },
+          { key: 'svcEnd', label: 'สิ้นสุด', value: (row) => fmtDate(row['svcEnd']) },
+          { key: 'svcDays', label: 'เหลือ (วัน)' },
+          { key: 'serviceStatus', label: 'สถานะ', badge: (row) => row['serviceStatus'] === 'หมดสัญญา' ? 'red' : row['serviceStatus'] === 'ใกล้หมด' ? 'amber' : 'green' },
+          { key: 'sharePercent', label: 'ส่วนแบ่ง SJP (%)' },
+        ];
+      case 'revenue-share':
+        return [
+          { key: 'code', label: 'รหัส' }, { key: 'name', label: 'โครงการ' },
+          { key: 'partner', label: 'คู่สัญญา' },
+          { key: 'sharePercent', label: 'ส่วนแบ่ง SJP (%)' },
+          { key: 'value', label: 'มูลค่าสัญญา', value: (row) => fmtMoney(row['value']) },
+          { key: 'invoiced', label: 'ออกใบแจ้งหนี้', value: (row) => fmtMoney(row['invoiced']) },
+          { key: 'received', label: 'รับชำระแล้ว', value: (row) => fmtMoney(row['received']) },
+          { key: 'sjpShare', label: 'ส่วน SJP', value: (row) => fmtMoney(row['sjpShare']) },
+          { key: 'partnerShare', label: 'ส่วนพาร์ตเนอร์', value: (row) => fmtMoney(row['partnerShare']) },
+        ];
+      case 'monthly-service':
+        return [
+          { key: 'projectCode', label: 'รหัส' }, { key: 'projectName', label: 'โครงการ' },
+          { key: 'opened', label: 'เคสเปิดใหม่' },
+          { key: 'closed', label: 'ปิดในเดือน' },
+          { key: 'urgent', label: 'เร่งด่วน/สูง' },
+          { key: 'avgResponse', label: 'ตอบสนองเฉลี่ย (ชม.)', value: (row) => row['avgResponse'] ?? '–' },
+          { key: 'avgResolve', label: 'แก้ไขเฉลี่ย (ชม.)', value: (row) => row['avgResolve'] ?? '–' },
+          { key: 'pmDue', label: 'PM ครบกำหนด' },
+          { key: 'pmDone', label: 'PM เสร็จ' },
         ];
       case 'boq':
         return [
@@ -134,7 +215,12 @@ export class ReportsComponent implements OnInit {
 
   open(row: Record<string, unknown>): void {
     if (this.active() === 'tickets') void this.router.navigate(['/tickets', String(row['id'])]);
-    if (this.active() === 'projects') void this.router.navigate(['/projects', String(row['id'])]);
+    if (this.active() === 'projects' || this.active() === 'service-contracts' || this.active() === 'revenue-share') {
+      void this.router.navigate(['/projects', String(row['id'])]);
+    }
+    if (this.active() === 'monthly-service' && row['id'] && !String(row['id']).startsWith('(')) {
+      void this.router.navigate(['/projects', String(row['id'])]);
+    }
     if (this.active() === 'serials') void this.router.navigate(['/entities/serials', String(row['id'])]);
     if (this.active() === 'boq' && row['projectId']) void this.router.navigate(['/projects', String(row['projectId'])]);
   }

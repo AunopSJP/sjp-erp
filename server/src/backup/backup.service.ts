@@ -2,14 +2,15 @@ import { InjectDrizzle } from '@nestjs/drizzle';
 import { Injectable } from '@nestjs/common';
 import { compare } from 'bcryptjs';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { Db } from '../db/database.service.js';
-import { approvals, audit, counters, events, records, roles, settings, users, webhookDeliveries, webhooks } from '../db/schema.js';
+import { approvals, audit, counters, events, records, roles, settings, userWorkspaces, users, webhookDeliveries, webhooks, workspaces } from '../db/schema.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { AccessService } from '../common/access.service.js';
 import { AuditService } from '../common/audit.service.js';
 import { nowIso } from '../common/dates.js';
 import { bad, forbidden } from '../common/exceptions.js';
+import { currentWorkspaceId } from '../common/workspace-context.js';
 import { FilesService } from '../files/files.service.js';
 import { ENTITY_DEFS } from '../meta/entities.js';
 import { MetadataService } from '../meta/metadata.service.js';
@@ -19,17 +20,19 @@ interface BackupPayload {
   version: number;
   exportedAt: string;
   secretsRedacted?: boolean;
-  users: unknown[];
-  roles: unknown[];
-  records: unknown[];
-  counters: unknown[];
-  audit: unknown[];
-  settings: unknown[];
-  approvals: unknown[];
-  events?: unknown[];
+  users: Record<string, unknown>[];
+  roles: Record<string, unknown>[];
+  records: Record<string, unknown>[];
+  counters: Record<string, unknown>[];
+  audit: Record<string, unknown>[];
+  settings: Record<string, unknown>[];
+  approvals: Record<string, unknown>[];
+  events?: Record<string, unknown>[];
   files?: unknown[];
   webhooks?: unknown[];
   webhookDeliveries?: unknown[];
+  workspaces?: Record<string, unknown>[];
+  userWorkspaces?: Record<string, unknown>[];
 }
 
 export interface EncryptedBackup {
@@ -110,6 +113,8 @@ export class BackupService {
       files: this.files.exportAll(),
       webhooks: this.db.select().from(webhooks).all().map((row) => ({ ...row, secret: '' })),
       webhookDeliveries: this.db.select().from(webhookDeliveries).all(),
+      workspaces: this.db.select().from(workspaces).all(),
+      userWorkspaces: this.db.select().from(userWorkspaces).all(),
     } satisfies BackupPayload;
     return this.encryptPayload(payload);
   }
@@ -140,6 +145,7 @@ export class BackupService {
     if (!hasActiveAdmin) bad('ไฟล์สำรองต้องมีผู้ดูแลระบบที่ใช้งานอยู่อย่างน้อย 1 คน');
 
     this.db.transaction((tx) => {
+      tx.delete(userWorkspaces).run();
       tx.delete(approvals).run();
       tx.delete(events).run();
       tx.delete(webhookDeliveries).run();
@@ -149,9 +155,28 @@ export class BackupService {
       tx.delete(settings).run();
       tx.delete(users).run();
       tx.delete(roles).run();
+      tx.delete(workspaces).run();
 
       if (payload.roles.length) tx.insert(roles).values(payload.roles as (typeof roles.$inferInsert)[]).run();
+      if (Array.isArray(payload.workspaces) && payload.workspaces.length) {
+        tx.insert(workspaces).values(payload.workspaces as (typeof workspaces.$inferInsert)[]).run();
+      }
+      if (!tx.select().from(workspaces).all().length) {
+        const now = nowIso();
+        tx.insert(workspaces).values({ id: 'default', name: 'องค์กรหลัก', archived: false, createdAt: now, updatedAt: now }).run();
+      }
       if (payload.users.length) tx.insert(users).values(payload.users as (typeof users.$inferInsert)[]).run();
+      if (Array.isArray(payload.userWorkspaces) && payload.userWorkspaces.length) {
+        tx.insert(userWorkspaces).values(payload.userWorkspaces as (typeof userWorkspaces.$inferInsert)[]).onConflictDoNothing().run();
+      }
+      // Old backups (and hand-edited ones) may lack memberships: every restored
+      // user must still belong to the default workspace and to their active one.
+      for (const row of tx.select().from(users).all()) {
+        const workspaceId = row.activeWorkspaceId || 'default';
+        for (const id of new Set(['default', workspaceId])) {
+          tx.insert(userWorkspaces).values({ userId: row.id, workspaceId: id }).onConflictDoNothing().run();
+        }
+      }
       if (payload.records.length) tx.insert(records).values(payload.records as (typeof records.$inferInsert)[]).run();
       if (payload.counters.length) tx.insert(counters).values(payload.counters as (typeof counters.$inferInsert)[]).run();
       if (payload.settings.length) tx.insert(settings).values(payload.settings as (typeof settings.$inferInsert)[]).run();
@@ -206,17 +231,17 @@ export class BackupService {
         if (typeof value[key] !== 'string' || !String(value[key]).trim()) bad(`ข้อมูล ${label} ขาดฟิลด์ ${key}`);
       }
     };
-    for (const row of payload.users as unknown[]) needs(row, ['id', 'username', 'name', 'passwordHash', 'roleId'], 'ผู้ใช้');
-    for (const row of payload.roles as unknown[]) {
+    for (const row of payload.users) needs(row, ['id', 'username', 'name', 'passwordHash', 'roleId'], 'ผู้ใช้');
+    for (const row of payload.roles) {
       needs(row, ['id', 'name'], 'บทบาท');
-      if (!isObject((row as Record<string, unknown>)['perms'])) bad('ข้อมูลบทบาทขาดสิทธิ์ (perms)');
+      if (!isObject(row['perms'])) bad('ข้อมูลบทบาทขาดสิทธิ์ (perms)');
     }
-    for (const row of payload.records as unknown[]) {
+    for (const row of payload.records) {
       needs(row, ['id', 'entity', 'code'], 'รายการ');
-      if (!isObject((row as Record<string, unknown>)['data'])) bad('ข้อมูลรายการขาด data');
+      if (!isObject(row['data'])) bad('ข้อมูลรายการขาด data');
     }
-    for (const row of payload.settings as unknown[]) needs(row, ['key'], 'ตั้งค่า');
-    for (const row of payload.approvals as unknown[]) needs(row, ['id', 'entity', 'recordId', 'kind', 'key'], 'คำขออนุมัติ');
+    for (const row of payload.settings) needs(row, ['key'], 'ตั้งค่า');
+    for (const row of payload.approvals) needs(row, ['id', 'entity', 'recordId', 'kind', 'key'], 'คำขออนุมัติ');
   }
 
   legacyImport(user: SafeUser, state: unknown, confirm: string) {
@@ -282,9 +307,15 @@ export class BackupService {
           if (match) max = Math.max(max, Number(match[1]));
         }
         const value = max || codes.length;
-        const existing = tx.select().from(counters).where(eq(counters.entity, entity)).all()[0];
-        if (existing) tx.update(counters).set({ value }).where(eq(counters.entity, entity)).run();
-        else tx.insert(counters).values({ entity, value }).run();
+        const workspaceId = currentWorkspaceId();
+        const existing = tx.select().from(counters)
+          .where(and(eq(counters.entity, entity), eq(counters.workspaceId, workspaceId))).all()[0];
+        if (existing) {
+          tx.update(counters).set({ value })
+            .where(and(eq(counters.entity, entity), eq(counters.workspaceId, workspaceId))).run();
+        } else {
+          tx.insert(counters).values({ workspaceId, entity, value }).run();
+        }
       }
     });
 

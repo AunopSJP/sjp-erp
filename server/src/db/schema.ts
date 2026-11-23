@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 
 export type Perms = Record<string, Record<string, boolean>>;
 export type JsonObject = Record<string, unknown>;
@@ -14,8 +14,22 @@ export const users = sqliteTable('users', {
   projectIds: text('project_ids', { mode: 'json' }).$type<string[]>().notNull(),
   siteIds: text('site_ids', { mode: 'json' }).$type<string[]>().notNull(),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  activeWorkspaceId: text('active_workspace_id').notNull().default('default'),
   createdAt: text('created_at').notNull(),
   updatedAt: text('updated_at').notNull(),
+});
+
+export const workspaces = sqliteTable('workspaces', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  archived: integer('archived', { mode: 'boolean' }).notNull().default(false),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const userWorkspaces = sqliteTable('user_workspaces', {
+  userId: text('user_id').notNull(),
+  workspaceId: text('workspace_id').notNull(),
 });
 
 export const roles = sqliteTable('roles', {
@@ -28,6 +42,7 @@ export const roles = sqliteTable('roles', {
 
 export const records = sqliteTable('records', {
   id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
   entity: text('entity').notNull(),
   code: text('code').notNull(),
   data: text('data', { mode: 'json' }).$type<JsonObject>().notNull(),
@@ -41,13 +56,16 @@ export const records = sqliteTable('records', {
   updatedAt: text('updated_at').notNull(),
 });
 
+/** Document sequence per workspace: each organisation numbers its own documents. */
 export const counters = sqliteTable('counters', {
-  entity: text('entity').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
+  entity: text('entity').notNull(),
   value: integer('value').notNull().default(0),
-});
+}, (table) => [primaryKey({ columns: [table.workspaceId, table.entity] })]);
 
 export const audit = sqliteTable('audit', {
   id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
   at: text('at').notNull(),
   userId: text('user_id'),
   userName: text('user_name').notNull(),
@@ -61,6 +79,7 @@ export const audit = sqliteTable('audit', {
 
 export const approvals = sqliteTable('approvals', {
   id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
   at: text('at').notNull(),
   by: text('by').notNull(),
   status: text('status').notNull().default('pending'),
@@ -78,6 +97,7 @@ export const approvals = sqliteTable('approvals', {
 
 export const events = sqliteTable('events', {
   id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
   at: text('at').notNull(),
   type: text('type').notNull(),
   entity: text('entity').notNull().default(''),
@@ -115,6 +135,21 @@ export const webhookDeliveries = sqliteTable('webhook_deliveries', {
   deliveredAt: text('delivered_at'),
 });
 
+export const savedViews = sqliteTable('saved_views', {
+  id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
+  entity: text('entity').notNull(),
+  name: text('name').notNull(),
+  visibility: text('visibility').notNull().default('private'),
+  ownerId: text('owner_id').notNull(),
+  ownerName: text('owner_name').notNull(),
+  config: text('config', { mode: 'json' }).$type<JsonObject>().notNull(),
+  createdAt: text('created_at').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export type SavedViewRow = typeof savedViews.$inferSelect;
+
 export const notifyQueue = sqliteTable('notify_queue', {
   id: text('id').primaryKey(),
   channel: text('channel').notNull(),
@@ -131,6 +166,7 @@ export const notifyQueue = sqliteTable('notify_queue', {
 
 export const files = sqliteTable('files', {
   id: text('id').primaryKey(),
+  workspaceId: text('workspace_id').notNull().default('default'),
   name: text('name').notNull(),
   mime: text('mime').notNull(),
   size: integer('size').notNull(),

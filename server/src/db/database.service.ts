@@ -219,8 +219,10 @@ export class DatabaseService implements OnModuleInit {
       CREATE INDEX IF NOT EXISTS idx_records_entity ON records(entity, deleted);
       CREATE INDEX IF NOT EXISTS idx_records_code ON records(entity, code);
       CREATE TABLE IF NOT EXISTS counters (
-        entity TEXT PRIMARY KEY,
-        value INTEGER NOT NULL DEFAULT 0
+        workspace_id TEXT NOT NULL DEFAULT 'default',
+        entity TEXT NOT NULL,
+        value INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (workspace_id, entity)
       );
       CREATE TABLE IF NOT EXISTS audit (
         id TEXT PRIMARY KEY,
@@ -318,18 +320,92 @@ export class DatabaseService implements OnModuleInit {
       );
       CREATE INDEX IF NOT EXISTS idx_notify_queue_due
         ON notify_queue(status, next_at);
+      CREATE TABLE IF NOT EXISTS saved_views (
+        id TEXT PRIMARY KEY,
+        entity TEXT NOT NULL,
+        name TEXT NOT NULL,
+        visibility TEXT NOT NULL DEFAULT 'private',
+        owner_id TEXT NOT NULL,
+        owner_name TEXT NOT NULL,
+        config TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_saved_views_entity ON saved_views(entity, visibility, owner_id);
+      CREATE TABLE IF NOT EXISTS workspaces (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        archived INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS user_workspaces (
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        PRIMARY KEY (user_id, workspace_id)
+      );
+    `);
+
+    // Workspace isolation (model A): one shared schema, scoped by workspace_id.
+    // Existing databases get the column with a `default` backfill.
+    const ensureColumn = (table: string, column: string, ddl: string): void => {
+      const columns = client.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+      if (!columns.some((entry) => entry.name === column)) {
+        client.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl};`);
+      }
+    };
+    for (const table of ['records', 'saved_views', 'audit', 'approvals', 'events', 'files']) {
+      ensureColumn(table, 'workspace_id', "workspace_id TEXT NOT NULL DEFAULT 'default'");
+    }
+    ensureColumn('users', 'active_workspace_id', "active_workspace_id TEXT NOT NULL DEFAULT 'default'");
+
+    // Document counters moved from one global sequence to one per workspace.
+    // Existing databases keep their numbers, assigned to the `default` workspace.
+    const counterColumns = client.prepare('PRAGMA table_info(counters)').all() as { name: string }[];
+    if (!counterColumns.some((entry) => entry.name === 'workspace_id')) {
+      client.exec(`
+        CREATE TABLE counters_migrated (
+          workspace_id TEXT NOT NULL DEFAULT 'default',
+          entity TEXT NOT NULL,
+          value INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (workspace_id, entity)
+        );
+        INSERT OR IGNORE INTO counters_migrated (workspace_id, entity, value)
+          SELECT 'default', entity, value FROM counters;
+        DROP TABLE counters;
+        ALTER TABLE counters_migrated RENAME TO counters;
+      `);
+    }
+    const now = new Date().toISOString();
+    client
+      .prepare('INSERT OR IGNORE INTO workspaces (id, name, archived, created_at, updated_at) VALUES (?, ?, 0, ?, ?)')
+      .run('default', 'องค์กรหลัก', now, now);
+    client.exec('INSERT OR IGNORE INTO user_workspaces (user_id, workspace_id) SELECT id, \'default\' FROM users;');
+    client.exec(`
+      CREATE INDEX IF NOT EXISTS idx_records_workspace ON records(workspace_id, entity, deleted);
+      CREATE INDEX IF NOT EXISTS idx_saved_views_workspace ON saved_views(workspace_id, entity);
+      CREATE INDEX IF NOT EXISTS idx_audit_workspace ON audit(workspace_id, at);
+      CREATE INDEX IF NOT EXISTS idx_events_workspace ON events(workspace_id, at);
+      CREATE INDEX IF NOT EXISTS idx_approvals_workspace ON approvals(workspace_id, status);
+      CREATE INDEX IF NOT EXISTS idx_files_workspace ON files(workspace_id, created_at);
     `);
 
     // Defence in depth for the atomic counter: never allow the same document
-    // code twice inside one entity. Existing databases with duplicates are
-    // reported instead of failing startup; clean them before enforcing.
+    // code twice inside one workspace. The index is rebuilt once because older
+    // databases enforced uniqueness across every workspace (`entity`, `code`).
+    const codeIndex = client
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'records_entity_code_uq'")
+      .get() as { sql?: string } | undefined;
+    if (codeIndex && !String(codeIndex.sql ?? '').includes('workspace_id')) {
+      client.exec('DROP INDEX records_entity_code_uq;');
+    }
     const duplicate = client
-      .prepare('SELECT 1 FROM records GROUP BY entity, code HAVING COUNT(*) > 1 LIMIT 1')
+      .prepare('SELECT 1 FROM records GROUP BY workspace_id, entity, code HAVING COUNT(*) > 1 LIMIT 1')
       .get();
     if (duplicate) {
-      this.logger.warn('records มี entity/code ซ้ำ — ยังไม่สร้าง unique index; ตรวจและล้างข้อมูลก่อน');
+      this.logger.warn('records มี workspace/entity/code ซ้ำ — ยังไม่สร้าง unique index; ตรวจและล้างข้อมูลก่อน');
     } else {
-      client.exec('CREATE UNIQUE INDEX IF NOT EXISTS records_entity_code_uq ON records(entity, code);');
+      client.exec('CREATE UNIQUE INDEX IF NOT EXISTS records_entity_code_uq ON records(workspace_id, entity, code);');
     }
 
     this.db

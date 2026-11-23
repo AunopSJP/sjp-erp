@@ -6,6 +6,7 @@ import { bad } from '../common/exceptions.js';
 import { WORKFLOWS } from '../meta/entities.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { RecordsService, type RawRecord } from '../records/records.service.js';
+import type { ListQuery } from '../records/list-query.js';
 import { StockService } from './stock.service.js';
 
 @Injectable()
@@ -29,6 +30,18 @@ export class PurchasingService {
         pct: this.progress(po, got),
       };
     });
+  }
+
+  page(user: SafeUser, query: ListQuery) {
+    const page = this.records.list(user, 'purchaseOrders', query);
+    const received = this.receivedByPo(page.items.map((order) => order.id));
+    return {
+      ...page,
+      items: page.items.map((order) => {
+        const receivedMap = received.get(order.id) ?? {};
+        return { ...order, receivedMap, amount: this.amount(order), pct: this.progress(order, receivedMap) };
+      }),
+    };
   }
 
   detail(user: SafeUser, id: string) {
@@ -66,13 +79,13 @@ export class PurchasingService {
   }
 
   received(poId: string): Record<string, number> {
-    return this.receivedByPo().get(poId) ?? {};
+    return this.receivedByPo([poId]).get(poId) ?? {};
   }
 
   /** Load stock moves once and group by PO, so list() does not scan them per PO. */
-  private receivedByPo(): Map<string, Record<string, number>> {
+  private receivedByPo(orderIds?: string[]): Map<string, Record<string, number>> {
     const out = new Map<string, Record<string, number>>();
-    for (const move of this.records.rawAll('stockMoves')) {
+    for (const move of orderIds ? this.records.purchaseReceipts(orderIds) : this.records.rawAll('stockMoves')) {
       if (move.data['type'] !== 'receive') continue;
       const poId = String(move.data['po'] ?? '');
       if (!poId) continue;

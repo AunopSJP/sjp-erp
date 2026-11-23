@@ -7,5 +7,6 @@ import { PdfService } from './pdf.service.js';
   imports: [RecordsModule],
   controllers: [PdfController],
   providers: [PdfService],
+  exports: [PdfService],
 })
 export class PdfModule {}

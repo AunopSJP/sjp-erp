@@ -7414,3 +7414,48 @@ button, a, [role='button'], summary, label { touch-action: manipulation; }
 @media (max-width: 700px) {
   .signoff-editor { grid-template-columns: 1fr 1fr; }
 }
+
+/* Command palette: lock the page behind the dialog so arrow keys never scroll it. */
+body.palette-open { overflow: hidden; }
+
+/* Workspace layers */
+.ws-layers { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; }
+.ws-layer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ws-layer:hover { border-color: var(--muted); }
+.ws-layer.active { background: var(--card-2); border-color: var(--muted); font-weight: 600; }
+.ws-layer.add { border-style: dashed; color: var(--muted); }
+.ws-layer.ghost { background: transparent; }
+.ws-layer.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 35%, var(--line)); }
+.ws-layers-actions { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-left: 4px; }
+.ws-layer.select { padding: 5px 8px; }
+.ws-layer-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--line2);
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+/* แถวที่จัดอัตโนมัติ: การ์ดในแถวเดียวกันยืดเต็มความสูงเท่ากัน */
+.ws-canvas .ws-widget { display: flex; flex-direction: column; }
+.ws-canvas .ws-widget > app-workspace-widget { display: block; flex: 1 1 auto; min-height: 0; }
+.ws-canvas app-workspace-widget > .panel,
+.ws-canvas app-workspace-widget > .dash-kpis { height: 100%; }

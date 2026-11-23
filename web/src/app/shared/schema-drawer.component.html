@@ -1,0 +1,245 @@
+<app-modal [title]="'เพิ่มฟิลด์ · ' + entity().label" [side]="true" (closed)="requestClose()">
+  <p class="muted schema-source">ชุดข้อมูล: <strong>{{ entity().label }}</strong> · ID ถาวรของฟิลด์ใช้ใน API และการอ้างอิง</p>
+
+  @if (askingDiscard()) {
+    <div class="notice warn" role="alert">
+      มีข้อมูลที่กรอกไว้แต่ยังไม่สร้างฟิลด์
+      <button type="button" class="btn sm" (click)="askingDiscard.set(false)">อยู่ต่อ</button>
+      <button type="button" class="btn sm" (click)="discard()">ทิ้งร่าง</button>
+    </div>
+  }
+  @if (error()) {
+    <div class="notice bad" role="alert">{{ error() }}</div>
+  }
+
+  @if (impact(); as result) {
+    @if (result.affected) {
+      <div class="notice warn" role="status">
+        ฟิลด์บังคับกรอกนี้จะกระทบ {{ result.affected }} จาก {{ result.total }} รายการเดิมที่ยังไม่มีค่า —
+        ระบบจะไม่เติมค่าให้อัตโนมัติ และการยืนยันจะบันทึกฟิลด์เป็นบังคับกรอกทันที
+      </div>
+    } @else {
+      <div class="notice" role="status">รายการเดิมทั้งหมด {{ result.total }} รายการมีค่าให้ฟิลด์นี้แล้ว หรือยังไม่มีข้อมูล</div>
+    }
+    @if (result.views.length || result.workflows.length) {
+      <div class="muted small" role="status">
+        @if (result.views.length) { ใช้ใน {{ result.views.length }} มุมมอง: {{ impactViews(result) }} }
+        @if (result.workflows.length) { @if (result.views.length) { · } workflow ที่บังคับฟิลด์นี้: {{ result.workflows.join(', ') }} }
+      </div>
+    }
+  } @else if (impactBusy()) {
+    <p class="muted" role="status">กำลังตรวจผลกระทบ…</p>
+  }
+
+  @if (pendingConvert(); as pending) {
+    <div class="notice warn" role="alert">
+      การแปลงฟิลด์ "{{ fieldLabel(pending.key) }}" เป็น {{ typeLabel(pending.type) }} จะล้างค่าที่แปลงไม่ได้
+      <button type="button" class="btn sm" (click)="confirmChangeType()">แปลงและล้างค่า</button>
+      <button type="button" class="btn sm" (click)="pendingConvert.set(null)">ยกเลิก</button>
+    </div>
+  }
+
+  <div class="form-grid">
+    <div class="field">
+      <label for="schema-label">ชื่อฟิลด์ *</label>
+      <input id="schema-label" #labelInput [value]="label()" maxlength="80" (input)="setLabel(inputValue($event))" />
+      @if (fieldErrors()['label']) { <div class="err" role="alert">{{ fieldErrors()['label'] }}</div> }
+    </div>
+    <div class="field">
+      <label for="schema-key">key (ID ถาวร) *</label>
+      <input id="schema-key" [value]="key()" maxlength="40" (input)="setKey(inputValue($event))" (blur)="refreshImpact()" />
+      <div class="muted small">เปลี่ยนป้ายชื่อได้ภายหลังโดย ID ไม่เปลี่ยน</div>
+      @if (fieldErrors()['key']) { <div class="err" role="alert">{{ fieldErrors()['key'] }}</div> }
+    </div>
+    <div class="field">
+      <label for="schema-type">ประเภท *</label>
+      <select id="schema-type" [value]="type()" (change)="setType(inputValue($event))">
+        @for (option of types; track option[0]) { <option [value]="option[0]" [selected]="option[0] === type()">{{ option[1] }}</option> }
+      </select>
+    </div>
+    @if (type() === 'select' || type() === 'multiselect') {
+      <div class="field wide">
+        <label>ตัวเลือก (ID ถาวร · ป้าย · สี) *</label>
+        <div class="option-table" role="group" aria-label="ตัวเลือกของฟิลด์">
+          @for (row of optionRows(); track $index; let i = $index) {
+            <div class="option-row">
+              <input [value]="row.id" (input)="setOption(i, 'id', inputValue($event))" placeholder="id" [attr.aria-label]="'id ตัวเลือกที่ ' + (i + 1)" />
+              <input [value]="row.label" (input)="setOption(i, 'label', inputValue($event))" placeholder="ป้ายที่แสดง" [attr.aria-label]="'ป้ายตัวเลือกที่ ' + (i + 1)" />
+              <select [value]="row.color" (change)="setOption(i, 'color', inputValue($event))" [attr.aria-label]="'สีตัวเลือกที่ ' + (i + 1)">
+                @for (color of colors; track color[0]) { <option [value]="color[0]">{{ color[1] }}</option> }
+              </select>
+              <label class="check"><input type="checkbox" [checked]="row.archived" (change)="setOption(i, 'archived', checked($event))" /> เก็บถาวร</label>
+              <button type="button" class="btn sm" (click)="removeOption(i)" [attr.aria-label]="'ลบตัวเลือกที่ ' + (i + 1)">×</button>
+            </div>
+            @if (roles().length) {
+              <div class="option-roles">
+                <span class="muted small">สิทธิ์เลือก:</span>
+                @for (role of roles(); track role.id) {
+                  <label class="check"><input type="checkbox" [checked]="row.roles.includes(role.id)" (change)="toggleOptionRole(i, role.id, $event)" /> {{ role.name }}</label>
+                }
+                @if (!row.roles.length) { <span class="muted small">(ทุกบทบาท)</span> }
+              </div>
+            }
+          }
+        </div>
+        <button type="button" class="btn sm" [disabled]="optionRows().length >= 30" (click)="addOption()">+ เพิ่มตัวเลือก</button>
+        <div class="muted small">ID เก็บในข้อมูลและไม่เปลี่ยนเมื่อแก้ป้าย; ตัวเลือกที่เก็บถาวรยังอ่านประวัติได้แต่เลือกใหม่ไม่ได้</div>
+        @if (fieldErrors()['options']) { <div class="err" role="alert">{{ fieldErrors()['options'] }}</div> }
+      </div>
+    }
+    @if (type() === 'number') {
+      <div class="field"><label for="schema-currency">สกุลเงิน (ถ้าเป็นเงิน)</label>
+        <input id="schema-currency" [value]="currency()" maxlength="3" placeholder="THB" (input)="currency.set(inputValue($event))" />
+        <div class="muted small">ระบบไม่รวมยอดต่างสกุลเป็นค่าเดียว</div>
+        @if (fieldErrors()['currency']) { <div class="err" role="alert">{{ fieldErrors()['currency'] }}</div> }</div>
+      <div class="field"><label for="schema-decimals">ทศนิยม (0–6)</label>
+        <input id="schema-decimals" type="number" min="0" max="6" [value]="decimals()" (input)="decimals.set(inputValue($event))" />
+        @if (fieldErrors()['decimals']) { <div class="err" role="alert">{{ fieldErrors()['decimals'] }}</div> }</div>
+      <div class="field"><label for="schema-min">ค่าต่ำสุด</label>
+        <input id="schema-min" type="number" [value]="min()" (input)="min.set(inputValue($event))" />
+        @if (fieldErrors()['min']) { <div class="err" role="alert">{{ fieldErrors()['min'] }}</div> }</div>
+      <div class="field"><label for="schema-max">ค่าสูงสุด</label>
+        <input id="schema-max" type="number" [value]="max()" (input)="max.set(inputValue($event))" />
+        @if (fieldErrors()['max']) { <div class="err" role="alert">{{ fieldErrors()['max'] }}</div> }</div>
+    }
+    @if (type() === 'text' || type() === 'textarea') {
+      <div class="field"><label for="schema-maxlength">ความยาวสูงสุด</label>
+        <input id="schema-maxlength" type="number" min="1" max="10000" [value]="maxLength()" (input)="maxLength.set(inputValue($event))" />
+        @if (fieldErrors()['maxLength']) { <div class="err" role="alert">{{ fieldErrors()['maxLength'] }}</div> }</div>
+    }
+    @if (type() === 'ref') {
+      <div class="field wide">
+        <label for="schema-ref">โมดูลปลายทาง *</label>
+        <select id="schema-ref" [value]="refTarget()" (change)="setRefTarget(inputValue($event))">
+          <option value="">– เลือก –</option>
+          @for (target of refOptions(); track target.key) {
+            <option [value]="target.key" [selected]="target.key === refTarget()">{{ target.label }}</option>
+          }
+        </select>
+        @if (fieldErrors()['ref']) { <div class="err" role="alert">{{ fieldErrors()['ref'] }}</div> }
+      </div>
+      @if (refTarget()) {
+        <div class="field wide">
+          <label class="check"><input type="checkbox" [checked]="multiple()" (change)="setMultiple($event)" /> เชื่อมหลายรายการ (เก็บเป็นรายการ id)</label>
+          @if (displayFields().length) {
+            <div class="field">
+              <label for="schema-display-field">ฟิลด์แสดงชื่อจากปลายทาง</label>
+              <select id="schema-display-field" [value]="displayField()" (change)="displayField.set(inputValue($event))">
+                <option value="">ใช้ชื่อหลักของปลายทาง</option>
+                @for (field of displayFields(); track field.key) { <option [value]="field.key">{{ field.label }}</option> }
+              </select>
+            </div>
+          }
+        </div>
+      }
+      @if (canBacklink()) {
+        <div class="field wide">
+          <label class="check"><input type="checkbox" [checked]="backlink()" (change)="setBacklink($event)" /> สร้างลิงก์ย้อนกลับที่ {{ metaLabel(refTarget()) }}</label>
+          @if (backlink()) {
+            <div class="form-grid">
+              <div class="field"><label for="schema-back-key">key ลิงก์ย้อนกลับ</label><input id="schema-back-key" [value]="backlinkKey()" (input)="backlinkKey.set(inputValue($event))" /></div>
+              <div class="field"><label for="schema-back-label">ชื่อลิงก์ย้อนกลับ</label><input id="schema-back-label" [value]="backlinkLabel()" (input)="backlinkLabel.set(inputValue($event))" /></div>
+            </div>
+            <label class="check"><input type="checkbox" [checked]="backlinkMultiple()" (change)="setBacklinkMultiple($event)" /> ฝั่งย้อนกลับเก็บได้หลายรายการ (many-to-many)</label>
+            <div class="muted small">สร้างทั้งสองฝั่งพร้อมกัน หรือไม่เปลี่ยนทั้งสองฝั่งเมื่อฝั่งใดฝั่งหนึ่งไม่ผ่าน; ฝั่งย้อนกลับจะอัปเดตตามการบันทึกของฝั่งนี้</div>
+          }
+        </div>
+      } @else if (refTarget()) {
+        <div class="notice small">โมดูลนี้แก้โครงสร้างไม่ได้ จึงไม่สามารถเพิ่มลิงก์ย้อนกลับได้</div>
+      }
+    }
+    <div class="field wide">
+      <label for="schema-help">คำอธิบายช่วยกรอก</label>
+      <input id="schema-help" [value]="help()" maxlength="240" (input)="help.set(inputValue($event))" placeholder="อธิบายวิธีกรอกหรือที่มาของค่า" />
+    </div>
+  </div>
+
+  <div class="schema-flags">
+    <label class="check"><input type="checkbox" [checked]="required()" (change)="toggleRequired($event)" /> บังคับกรอก (กฎของข้อมูล ไม่ใช่การซ่อน/แสดงในมุมมอง)</label>
+    <label class="check"><input type="checkbox" [checked]="wide()" (change)="wide.set(checked($event))" /> กว้างเต็มแถวในฟอร์ม</label>
+    <label class="check"><input type="checkbox" [checked]="showInView()" (change)="showInView.set(checked($event))" /> แสดงคอลัมน์นี้ในมุมมองปัจจุบัน (เฉพาะฉัน)</label>
+  </div>
+
+  @if (editOptionsKey()) {
+    <div class="card" role="group" aria-label="แก้ตัวเลือกและสิทธิ์">
+      <b>ตัวเลือกของ "{{ fieldLabel(editOptionsKey()) }}"</b>
+      <p class="muted small">id เปลี่ยนไม่ได้เพราะข้อมูลอ้างอิงอยู่; ลบตัวเลือกที่มีข้อมูลแล้วไม่ได้ — ใช้ “เก็บถาวร” แทน</p>
+      <div class="option-table">
+        @for (row of editOptionRows(); track $index; let i = $index) {
+          <div class="option-row">
+            <code>{{ row.id }}</code>
+            <input [value]="row.label" (input)="setEditOption(i, 'label', inputValue($event))" [attr.aria-label]="'ป้ายตัวเลือกที่ ' + (i + 1)" />
+            <select [value]="row.color" (change)="setEditOption(i, 'color', inputValue($event))" [attr.aria-label]="'สีตัวเลือกที่ ' + (i + 1)">
+              @for (color of colors; track color[0]) { <option [value]="color[0]">{{ color[1] }}</option> }
+            </select>
+            <label class="check"><input type="checkbox" [checked]="row.archived" (change)="setEditOption(i, 'archived', checked($event))" /> เก็บถาวร</label>
+            <button type="button" class="btn sm" (click)="removeEditOption(i)" [attr.aria-label]="'ลบตัวเลือกที่ ' + (i + 1)">×</button>
+          </div>
+          @if (roles().length) {
+            <div class="option-roles">
+              <span class="muted small">สิทธิ์เลือก:</span>
+              @for (role of roles(); track role.id) {
+                <label class="check"><input type="checkbox" [checked]="row.roles.includes(role.id)" (change)="toggleEditOptionRole(i, role.id, $event)" /> {{ role.name }}</label>
+              }
+              @if (!row.roles.length) { <span class="muted small">(ทุกบทบาท)</span> }
+            </div>
+          }
+        }
+      </div>
+      <div class="schema-flags">
+        <button type="button" class="btn sm" [disabled]="editOptionRows().length >= 30" (click)="addEditOption()">+ เพิ่มตัวเลือก</button>
+        <button type="button" class="btn primary sm" [disabled]="editOptionsBusy()" (click)="saveOptionEditor()">{{ editOptionsBusy() ? 'กำลังบันทึก…' : 'บันทึกตัวเลือก' }}</button>
+        <button type="button" class="btn sm" [disabled]="editOptionsBusy()" (click)="closeOptionEditor()">ยกเลิก</button>
+      </div>
+    </div>
+  }
+
+  <details class="schema-existing">
+    <summary>ฟิลด์ที่มีอยู่ ({{ entity().fields.length }})</summary>
+    <ul>
+      @for (field of entity().fields; track field.key) {
+        <li>
+          <div><strong>{{ field.label }}</strong> <span class="muted">{{ typeLabel(field.type) }} · {{ field.key }}</span>
+            @if (field.archived) { <span class="badge gray">เก็บถาวร</span> }
+            @if (field.mirror) { <span class="badge blue">ลิงก์ย้อนกลับ</span> }
+          </div>
+          @if (!field.readOnly) {
+            <div class="field-actions">
+              <select [value]="fieldTypeDraft()[field.key] || field.type" [disabled]="!!fieldActionBusy()" [attr.aria-label]="'ชนิดใหม่ของ ' + field.label" (change)="setFieldType(field.key, inputValue($event))">
+                @for (option of types; track option[0]) { <option [value]="option[0]" [selected]="option[0] === (fieldTypeDraft()[field.key] || field.type)">{{ option[1] }}</option> }
+              </select>
+              <button type="button" class="btn sm" [disabled]="!!fieldActionBusy() || (fieldTypeDraft()[field.key] || field.type) === field.type" (click)="changeFieldType(field.key)">เปลี่ยนชนิด</button>
+              <button type="button" class="btn sm" [disabled]="!!fieldActionBusy()" (click)="toggleFieldArchive(field)">{{ field.archived ? 'คืนสถานะ' : 'เก็บถาวร' }}</button>
+              @if (field.type === 'select' || field.type === 'multiselect') {
+                <button type="button" class="btn sm" [disabled]="!!fieldActionBusy()" (click)="openOptionEditor(field)">ตัวเลือก/สิทธิ์</button>
+              }
+            </div>
+          }
+        </li>
+      }
+    </ul>
+    <p class="muted small">“เก็บถาวร” ซ่อนฟิลด์จากฟอร์มและตัวกรองแต่คงข้อมูลเดิมไว้; การเปลี่ยนชนิดจะแปลงค่าให้อัตโนมัติและบอกจำนวนค่าที่ต้องล้าง</p>
+  </details>
+
+  @if (reviewing()) {
+    <div class="card" role="region" aria-label="ตรวจก่อนสร้างฟิลด์">
+      <b>ตรวจก่อนสร้าง</b>
+      <dl class="muted small">
+        <div><dt>ชื่อ / ประเภท</dt><dd>{{ label() }} ({{ key() }}) · {{ typeLabel(type()) }} · ชุดข้อมูล {{ entity().label }}</dd></div>
+        <div><dt>กฎ</dt><dd>{{ reviewSummary().rule }}</dd></div>
+        <div><dt>ผลกับรายการเดิม</dt><dd>{{ reviewSummary().scope }}</dd></div>
+        <div><dt>มุมมอง</dt><dd>{{ reviewSummary().views }}</dd></div>
+      </dl>
+    </div>
+  }
+
+  <div modal-footer>
+    <button type="button" class="btn" [disabled]="busy()" (click)="requestClose()">ยกเลิก</button>
+    @if (reviewing()) {
+      <button type="button" class="btn" [disabled]="busy()" (click)="reviewing.set(false)">กลับไปแก้</button>
+      <button type="button" class="btn primary" [disabled]="busy()" (click)="create()">{{ busy() ? 'กำลังสร้าง…' : 'สร้างฟิลด์' }}</button>
+    } @else {
+      <button type="button" class="btn primary" [disabled]="busy()" (click)="review()">ตรวจก่อนสร้าง</button>
+    }
+  </div>
+</app-modal>

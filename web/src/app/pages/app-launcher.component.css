@@ -1,0 +1,18 @@
+.launcher { display: grid; gap: 20px; }
+.launcher h1, .launcher h2, .launcher p { margin: 0; }
+.launcher h1 span { font-size: .56em; font-weight: 500; }
+.launcher h2 { font-size: 1rem; }
+.launcher-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; }
+.launcher-head p { margin-top: 4px; }
+.launcher-tools { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 12px; }
+.launcher-shortcuts, .launcher-grid { list-style: none; padding: 0; margin: 12px 0; }
+.launcher-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; }
+.launcher-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 12px; }
+.launcher-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 8px; margin: 0; }
+.launcher-card p { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.launcher-link { display: flex; align-items: center; gap: 10px; min-height: 44px; color: inherit; overflow-wrap: anywhere; }
+.launcher-link small { display: block; }
+.launcher-pin { min-width: 44px; min-height: 44px; }
+.launcher-pin[aria-pressed='true'] { color: var(--pri); border-color: currentColor; }
+.launcher .state p { margin-bottom: 10px; }
+@media (max-width: 540px) { .launcher-tools { grid-template-columns: minmax(0, 1fr); } }

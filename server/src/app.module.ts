@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { DrizzleModule } from '@nestjs/drizzle';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -23,6 +23,8 @@ import { PdfModule } from './pdf/pdf.module.js';
 import { RecordsModule } from './records/records.module.js';
 import { SearchModule } from './search/search.module.js';
 import { WebhooksModule } from './webhooks/webhooks.module.js';
+import { ViewsModule } from './views/views.module.js';
+import { WorkspaceInterceptor } from './common/workspace.interceptor.js';
 
 const dbPath = process.env.DATABASE_PATH ?? join(process.cwd(), 'data', 'sjp.sqlite');
 mkdirSync(dirname(dbPath), { recursive: true });
@@ -30,7 +32,11 @@ mkdirSync(dirname(dbPath), { recursive: true });
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env'] }),
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60000, limit: 120 }]),
+    ThrottlerModule.forRoot([{
+      name: 'default',
+      ttl: 60000,
+      limit: Math.max(1, Number(process.env.THROTTLE_LIMIT) || 120),
+    }]),
     DrizzleModule.forRoot({ drizzle, connection: dbPath }),
     DatabaseModule,
     EventsModule,
@@ -45,6 +51,7 @@ mkdirSync(dirname(dbPath), { recursive: true });
     WebhooksModule,
     SearchModule,
     OperationsModule,
+    ViewsModule,
   ],
   controllers: [AppController],
   providers: [
@@ -56,6 +63,10 @@ mkdirSync(dirname(dbPath), { recursive: true });
     {
       provide: APP_GUARD,
       useClass: AuthGuard,
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: WorkspaceInterceptor,
     },
   ],
 })

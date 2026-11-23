@@ -1,0 +1,15 @@
+.kb-board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 280px); gap: 12px; align-items: start; overflow-x: auto; padding: 2px 2px 12px; }
+.kb-search { display: grid; gap: 6px; max-width: 28rem; }
+.kb-notice { margin: 8px 0; }
+.kb-notice:empty { display: none; }
+.kb-lane { display: grid; gap: 10px; margin: 0; background: var(--bg); }
+.kb-lane header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.kb-lane h2 { font-size: 1rem; margin: 0; }
+.kb-card { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow-wrap: anywhere; }
+.kb-card a { font-weight: 650; }
+.kb-card dl, .kb-card dd, .kb-card p { margin: 0; }
+.kb-card dt { font-size: .85em; color: var(--muted); }
+.kb-card dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.kb-card select { width: 100%; }
+.kb-drop { outline: 2px solid var(--pri); outline-offset: -2px; }
+.kb-error { color: var(--bad, #ad241d); }

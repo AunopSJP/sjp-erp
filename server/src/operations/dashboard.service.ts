@@ -3,7 +3,7 @@ import { AuditService } from '../common/audit.service.js';
 import { AccessService } from '../common/access.service.js';
 import { ApprovalStoreService } from '../common/approvals.service.js';
 import { addDays, todayStr } from '../common/dates.js';
-import { projectSteps, WORKFLOWS } from '../meta/entities.js';
+import { projectStepsFor, WORKFLOWS } from '../meta/entities.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { RecordsService } from '../records/records.service.js';
 import { AccountingService } from './accounting.service.js';
@@ -43,6 +43,16 @@ export class DashboardService {
     const mine = open.filter((t) => t['assignee'] === user.id);
     const projects = this.access.canEntity(user, 'projects', 'view') ? this.records.all(user, 'projects') : [];
     const activeProjects = projects.filter((p) => !p['closed']);
+    const contracts = projects
+      .map((project) => {
+        const steps = (project['steps'] as Record<string, { values?: Record<string, unknown> }> | undefined) ?? {};
+        const end = String(steps['after']?.values?.['svcEnd'] ?? '').trim();
+        if (!end) return null;
+        const time = new Date(`${end}T00:00:00`).getTime();
+        if (!Number.isFinite(time)) return null;
+        return { days: Math.ceil((time - Date.now()) / 86400000) };
+      })
+      .filter((row): row is { days: number } => !!row);
     const pm = this.access.can(user, 'pm', 'view') ? this.records.all(user, 'pmRecords') : [];
     const today = todayStr();
     const pmOpen = pm.filter((r) => r['status'] !== 'เสร็จ');
@@ -94,6 +104,11 @@ export class DashboardService {
       pm: { overdue: pmOverdue.length, week: pmOpen.filter((r) => String(r['dueDate'] ?? '') >= today && String(r['dueDate'] ?? '') <= addDays(today, 7)).length },
       stock: { low: lowStock.length, names: lowStock.slice(0, 3).map((i) => String(i['name'] ?? '')) },
       warranty: warranty.length,
+      contracts: {
+        active: contracts.filter((row) => row.days > 60).length,
+        expiring: contracts.filter((row) => row.days >= 0 && row.days <= 60).length,
+        expired: contracts.filter((row) => row.days < 0).length,
+      },
       pendingApprovals: this.approvals.listFor(user).pending.filter((row) => row.by !== user.id).length,
       finance: this.accounting.summary(user),
       oldest: [...open]
@@ -113,7 +128,9 @@ export class DashboardService {
 
   private currentStep(project: Record<string, unknown>): string {
     const steps = (project['steps'] as Record<string, { status?: string }> | undefined) ?? {};
-    const next = projectSteps().find((s) => s.enabled && !['done', 'skipped'].includes(steps[s.key]?.status ?? 'pending'));
+    const next = projectStepsFor(String(project['track'] ?? '')).find(
+      (s) => !['done', 'skipped'].includes(steps[s.key]?.status ?? 'pending'),
+    );
     return next?.label.replace(/^\d+\.\s*/, '') ?? 'ครบทุกขั้นตอน';
   }
 }

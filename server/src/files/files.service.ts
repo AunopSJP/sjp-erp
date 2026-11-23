@@ -1,9 +1,9 @@
 import { InjectDrizzle } from '@nestjs/drizzle';
-import { Injectable, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { createReadStream, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { extname, join } from 'node:path';
-import { eq, like } from 'drizzle-orm';
+import { and, eq, like } from 'drizzle-orm';
 import type { Response } from 'express';
 import type { Db } from '../db/database.service.js';
 import { files, records } from '../db/schema.js';
@@ -14,6 +14,7 @@ import { nowIso } from '../common/dates.js';
 import { bad, forbidden, notFound } from '../common/exceptions.js';
 import { getEntity } from '../meta/entities.js';
 import { matchesFileSignature } from './file-signature.js';
+import { currentWorkspaceId } from '../common/workspace-context.js';
 
 export interface UploadedFileInput {
   originalname: string;
@@ -64,6 +65,7 @@ const MIME_BY_EXT: Record<string, string> = {
 @Injectable()
 export class FilesService implements OnModuleInit {
   private readonly dir = process.env.UPLOAD_DIR ?? join(process.cwd(), 'data', 'uploads');
+  private readonly logger = new Logger(FilesService.name);
 
   constructor(
     @InjectDrizzle() private readonly db: Db,
@@ -75,8 +77,9 @@ export class FilesService implements OnModuleInit {
     if (!existsSync(this.dir)) mkdirSync(this.dir, { recursive: true });
     try {
       chmodSync(this.dir, 0o700);
-    } catch {
-      /* best effort — Windows may not support POSIX modes */
+    } catch (error) {
+      // Windows may not support POSIX modes: keep running, but leave a trace.
+      this.logger.warn(`chmod upload dir skipped: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -85,7 +88,9 @@ export class FilesService implements OnModuleInit {
     if (!file || !file.buffer?.length) bad('กรุณาเลือกไฟล์');
     if (file.buffer.length > MAX_SIZE) bad('ไฟล์ต้องมีขนาดไม่เกิน 15 MB');
 
-    const existing = this.db.select().from(files).where(eq(files.uploadedBy, user.id)).all();
+    const existing = this.db.select().from(files)
+      .where(and(eq(files.uploadedBy, user.id), eq(files.workspaceId, currentWorkspaceId())))
+      .all();
     if (existing.length >= MAX_FILES_PER_USER) bad(`อัปโหลดได้ไม่เกิน ${MAX_FILES_PER_USER} ไฟล์ต่อผู้ใช้`);
     if (existing.reduce((sum, row) => sum + row.size, 0) + file.buffer.length > MAX_BYTES_PER_USER) {
       bad('พื้นที่ไฟล์ของผู้ใช้เต็มแล้ว กรุณาลบไฟล์เก่าก่อน');
@@ -104,6 +109,7 @@ export class FilesService implements OnModuleInit {
     await writeFile(path, file.buffer, { mode: 0o600 });
     const row: typeof files.$inferInsert = {
       id,
+      workspaceId: currentWorkspaceId(),
       name,
       mime,
       size: file.buffer.length,
@@ -117,7 +123,7 @@ export class FilesService implements OnModuleInit {
   }
 
   send(user: SafeUser, id: string, res: Response): void {
-    const row = this.db.select().from(files).where(eq(files.id, id)).all()[0];
+    const row = this.db.select().from(files).where(and(eq(files.id, id), eq(files.workspaceId, currentWorkspaceId()))).all()[0];
     if (!row) notFound('ไม่พบไฟล์');
     if (!existsSync(row.path)) notFound('ไม่พบไฟล์บนเซิร์ฟเวอร์');
     if (!this.canRead(user, row)) forbidden('ไม่มีสิทธิ์เข้าถึงไฟล์นี้');
@@ -131,13 +137,14 @@ export class FilesService implements OnModuleInit {
 
   remove(user: SafeUser, id: string): { ok: true } {
     this.access.require(user, 'settings', 'edit');
-    const row = this.db.select().from(files).where(eq(files.id, id)).all()[0];
+    const row = this.db.select().from(files).where(and(eq(files.id, id), eq(files.workspaceId, currentWorkspaceId()))).all()[0];
     if (!row) notFound('ไม่พบไฟล์');
-    this.db.delete(files).where(eq(files.id, id)).run();
+    this.db.delete(files).where(and(eq(files.id, id), eq(files.workspaceId, currentWorkspaceId()))).run();
     try {
       if (existsSync(row.path)) unlinkSync(row.path);
-    } catch {
-      /* metadata removal is enough */
+    } catch (error) {
+      // The database row is already gone; report the orphaned file for cleanup.
+      this.logger.warn(`ลบไฟล์บนดิสก์ไม่สำเร็จ ${row.path}: ${error instanceof Error ? error.message : String(error)}`);
     }
     this.audit.log(user, { action: 'delete', entity: 'files', recordId: id, recordCode: row.name, summary: `ลบไฟล์ ${row.name}` });
     return { ok: true };
@@ -150,7 +157,7 @@ export class FilesService implements OnModuleInit {
     const candidates = this.db
       .select()
       .from(records)
-      .where(like(records.data, `%${row.id}%`))
+      .where(and(like(records.data, `%${row.id}%`), eq(records.workspaceId, currentWorkspaceId())))
       .all();
     return candidates.some((record) => {
       let def;
@@ -165,7 +172,9 @@ export class FilesService implements OnModuleInit {
   }
 
   exportAll(): BackupFileEntry[] {
-    const rows = this.db.select().from(files).all().filter((row) => existsSync(row.path));
+    const rows = this.db.select().from(files)
+      .where(eq(files.workspaceId, currentWorkspaceId()))
+      .all().filter((row) => existsSync(row.path));
     const total = rows.reduce((sum, row) => sum + (Number(row.size) || 0), 0);
     if (total > MAX_BACKUP_BYTES) {
       bad('ไฟล์แนบมีขนาดใหญ่เกินกว่าจะสำรองเป็น JSON ได้ กรุณาสำรองฐานข้อมูลโดยตรง');
@@ -218,6 +227,7 @@ export class FilesService implements OnModuleInit {
       for (const file of prepared) {
         tx.insert(files).values({
           id: file.id,
+          workspaceId: currentWorkspaceId(),
           name: file.name,
           mime: file.mime,
           size: file.buffer.length,
@@ -234,8 +244,9 @@ export class FilesService implements OnModuleInit {
       if (keep.has(path)) continue;
       try {
         unlinkSync(path);
-      } catch {
-        /* best effort cleanup */
+      } catch (error) {
+        // Old backups may be locked by another process; keep the restore result.
+        this.logger.warn(`ลบไฟล์สำรองเก่าไม่สำเร็จ ${path}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     return prepared.length;

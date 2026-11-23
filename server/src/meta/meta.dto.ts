@@ -1,4 +1,5 @@
 import { Allow, IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength } from 'class-validator';
+import type { FieldDefInput } from './entities.js';
 
 export class EntityDto {
   @IsString()
@@ -26,15 +27,17 @@ export class EntityDto {
 
   @IsOptional()
   @IsArray()
-  cols?: unknown[];
+  @IsString({ each: true })
+  cols?: string[];
 
   @IsOptional()
   @IsArray()
-  filters?: unknown[];
+  @IsString({ each: true })
+  filters?: string[];
 
   @IsOptional()
   @IsArray()
-  fields?: unknown[];
+  fields?: FieldDefInput[];
 
   @IsOptional()
   @IsBoolean()
@@ -71,7 +74,54 @@ export class EntityDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
+  aliases?: string[];
+
+  @IsOptional()
+  @IsIn(['draft', 'published', 'archived'])
+  status?: 'draft' | 'published' | 'archived';
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   roleIds?: string[];
+}
+
+export class CreateFieldDto {
+  @IsObject()
+  field!: Record<string, unknown>;
+
+  @IsOptional()
+  @IsBoolean()
+  confirmRequired?: boolean;
+
+  @IsOptional()
+  @IsObject()
+  backlink?: { entity?: string; key?: string; label?: string; multiple?: boolean };
+}
+
+export class UpdateFieldDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(30)
+  type?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  archived?: boolean;
+
+  /** Required when a type change would clear values that cannot be converted. */
+  @IsOptional()
+  @IsBoolean()
+  confirm?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  options?: string[];
+
+  @IsOptional()
+  @IsArray()
+  optionMeta?: Record<string, unknown>[];
 }
 
 export class RenameFieldDto {

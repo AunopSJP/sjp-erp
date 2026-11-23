@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm';
 import type { Db } from '../db/database.service.js';
 import { users } from '../db/schema.js';
 import type { SafeUser } from '../auth/user.types.js';
-import { findEntity, type EntityDef } from '../meta/entities.js';
+import { findEntity, isOperational, type EntityDef } from '../meta/entities.js';
 import { forbidden, notFound } from './exceptions.js';
 
 export interface RecordLike {
@@ -52,12 +52,12 @@ export class AccessService {
 
   canEntity(user: SafeUser, entityKey: string, action: string): boolean {
     const def = findEntity(entityKey);
-    return !!def && this.can(user, def.resource, action);
+    return !!def && isOperational(def) && this.can(user, def.resource, action);
   }
 
   requireEntity(user: SafeUser, entityKey: string, action: string): EntityDef {
     const def = findEntity(entityKey);
-    if (!def) forbidden('ไม่พบชนิดข้อมูลนี้');
+    if (!def || !isOperational(def)) forbidden('ไม่พบรายการหรือคุณไม่มีสิทธิ์เข้าถึง');
     this.require(user, def.resource, action);
     return def;
   }
