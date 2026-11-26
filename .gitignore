@@ -10,3 +10,4 @@ server/data/uploads/
 server/.env
 *.log
 build-errors.txt
+.scratch/
