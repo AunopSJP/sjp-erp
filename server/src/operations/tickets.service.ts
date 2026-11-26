@@ -5,7 +5,7 @@ import { nowIso } from '../common/dates.js';
 import { bad } from '../common/exceptions.js';
 import { ENTITY_DEFS, WORKFLOWS } from '../meta/entities.js';
 import type { SafeUser } from '../auth/user.types.js';
-import { RecordsService } from '../records/records.service.js';
+import { RecordsService, type DecoratedRecord } from '../records/records.service.js';
 
 interface TimelineItem {
   id: string;
@@ -24,7 +24,9 @@ export class TicketsService {
     private readonly records: RecordsService,
     private readonly access: AccessService,
     private readonly approvals: ApprovalStoreService,
-  ) {}
+  ) {
+    records.useTransitionHandler('tickets', (user, id, to, opts) => this.status(user, id, to, opts) as DecoratedRecord);
+  }
 
   create(user: SafeUser, values: Record<string, unknown>) {
     const rec = this.records.create(user, 'tickets', values);

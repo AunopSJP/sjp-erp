@@ -3,9 +3,9 @@ import { AccessService } from '../common/access.service.js';
 import { ApprovalStoreService } from '../common/approvals.service.js';
 import { todayStr } from '../common/dates.js';
 import { bad } from '../common/exceptions.js';
-import { WORKFLOWS } from '../meta/entities.js';
+import { getEntity, WORKFLOWS } from '../meta/entities.js';
 import type { SafeUser } from '../auth/user.types.js';
-import { RecordsService, type RawRecord } from '../records/records.service.js';
+import { RecordsService, type DecoratedRecord, type RawRecord } from '../records/records.service.js';
 import type { ListQuery } from '../records/list-query.js';
 import { StockService } from './stock.service.js';
 
@@ -16,7 +16,12 @@ export class PurchasingService {
     private readonly access: AccessService,
     private readonly stock: StockService,
     private readonly approvals: ApprovalStoreService,
-  ) {}
+  ) {
+    records.useTransitionHandler(
+      'purchaseOrders',
+      (user, id, to, opts) => this.status(user, id, to, opts.comment) as DecoratedRecord,
+    );
+  }
 
   list(user: SafeUser) {
     this.access.require(user, 'purchase', 'view');
@@ -104,12 +109,19 @@ export class PurchasingService {
     const statuses = WORKFLOWS.po.statuses;
     const from = statuses.find((s) => s.key === String(rec['status'] ?? ''));
     const target = statuses.find((s) => s.key === to);
-    if (!target) bad('สถานะไม่ถูกต้อง');
+    if (!target || target.enabled === false) bad('สถานะไม่ถูกต้อง');
     if (from?.key === target.key) bad('อยู่ในสถานะนี้แล้ว');
     if (from && !from.next.includes(target.key)) {
       bad(`ไม่สามารถเปลี่ยนจาก "${from.label}" เป็น "${target.label}"`);
     }
     if (target.needClosePerm) this.access.require(user, 'purchase', 'close');
+    for (const key of (target as { requiredFields?: string[] }).requiredFields ?? []) {
+      const value = rec[key];
+      if (value === undefined || value === null || value === '' || (Array.isArray(value) && !value.length)) {
+        const label = getEntity('purchaseOrders')?.fields.find((field) => field.key === key)?.label ?? key;
+        bad(`ต้องกรอก "${label}" ก่อนเปลี่ยนเป็น "${target.label}"`);
+      }
+    }
     if (to === 'ordered' && !(Array.isArray(rec['lines']) && rec['lines'].length)) {
       bad('ใบสั่งซื้อต้องมีรายการ');
     }

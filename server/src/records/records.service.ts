@@ -70,8 +70,17 @@ const FINAL_LOCKED_ENTITIES = new Set(['tickets', 'projects', 'purchaseOrders', 
 const PO_LOCKED_FIELDS = ['vendor', 'project', 'orderDate', 'dueDate', 'lines'];
 const PO_LOCKED_STATUSES = ['ordered', 'partial', 'received', 'closed', 'cancelled'];
 
+type TransitionHandler = (
+  user: SafeUser,
+  id: string,
+  to: string,
+  opts: { comment?: string; fields?: Record<string, unknown> },
+) => DecoratedRecord;
+
 @Injectable()
 export class RecordsService {
+  private readonly transitionHandlers = new Map<string, TransitionHandler>();
+
   constructor(
     @InjectDrizzle() private readonly db: Db,
     private readonly access: AccessService,
@@ -645,6 +654,11 @@ export class RecordsService {
     });
   }
 
+  /** Entities with their own status rules register here, so no route can skip them. */
+  useTransitionHandler(entityKey: string, handler: TransitionHandler): void {
+    this.transitionHandlers.set(entityKey, handler);
+  }
+
   transition(
     user: SafeUser,
     entityKey: string,
@@ -652,6 +666,8 @@ export class RecordsService {
     to: string,
     opts: { comment?: string; fields?: Record<string, unknown> } = {},
   ): DecoratedRecord {
+    const handler = this.transitionHandlers.get(entityKey);
+    if (handler) return handler(user, id, to, opts);
     const def = this.access.requireEntity(user, entityKey, 'edit');
     const row = this.rawGet(entityKey, id);
     if (!row) notFound('ไม่พบรายการ');
