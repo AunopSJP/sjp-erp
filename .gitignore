@@ -11,3 +11,4 @@ server/.env
 *.log
 build-errors.txt
 .scratch/
+.claude/memory/audit.log

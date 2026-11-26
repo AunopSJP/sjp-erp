@@ -1,0 +1,40 @@
+{
+  "_doc": "Cue-triggered notes. Delivered by .claude/hooks/cue-recall.mjs. triggers: paths (globs, OR) and/or events (session-start, post-compaction, pre-edit). trust: human | agent | auto. anchor: file whose change after 'verified' marks the note as possibly stale.",
+  "notes": [
+    {
+      "id": "server-esm",
+      "kind": "gotcha",
+      "trust": "human",
+      "content": "server/ เป็น ESM: relative import ต้องลงท้าย .js, ไม่มี __dirname (ใช้ import.meta.dirname), เทสต์ใช้ Vitest → mock ด้วย vi.fn() ไม่ใช่ jest.fn()",
+      "triggers": { "paths": ["server/src/**", "server/test/**"] },
+      "anchor": "server/AGENTS.md",
+      "verified": "2026-11-26"
+    },
+    {
+      "id": "nest-first-party",
+      "kind": "directive",
+      "trust": "human",
+      "content": "ก่อนเพิ่มไลบรารีใน server ให้เช็กแพ็กเกจ first-party ของ NestJS ก่อน (รายการใน server/AGENTS.md) และ Nest เวอร์ชันนี้อาจใหม่กว่าที่รู้ ดู https://docs.nestjs.com/llms.txt",
+      "triggers": { "paths": ["server/package.json", "server/src/app.module.ts"] },
+      "anchor": "server/AGENTS.md",
+      "verified": "2026-11-26"
+    },
+    {
+      "id": "workflow-assumption",
+      "kind": "gotcha",
+      "trust": "human",
+      "content": "กติกา workflow (SLA, สัญญาบริการ, การอนุมัติ) ใน GLOSSARY.md และ ADR-0001 ยังเป็นสมมติฐานรอยืนยัน อย่า hard-code เป็นกติกาตายตัว ดู docs/workflow-interview.md",
+      "triggers": { "paths": ["server/src/operations/**", "server/src/records/**", "server/src/notify/**", "GLOSSARY.md", "docs/adr/**"] },
+      "anchor": "GLOSSARY.md",
+      "verified": "2026-11-26"
+    },
+    {
+      "id": "issue-tracker",
+      "kind": "directive",
+      "trust": "human",
+      "content": "Issue/spec อยู่เป็น markdown ใต้ .scratch/<feature>/ มีบรรทัด Status: ตาม docs/agents/triage-labels.md",
+      "triggers": { "events": ["session-start", "post-compaction"] },
+      "verified": "2026-11-26"
+    }
+  ]
+}
