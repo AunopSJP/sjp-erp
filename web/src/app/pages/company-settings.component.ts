@@ -41,7 +41,7 @@ const EMPTY: CompanyInfo = {
           <div class="muted small">ข้อมูลนี้จะแสดงบนหัวและท้ายเอกสาร PDF ทุกประเภท</div>
         </div>
         <span class="grow"></span>
-        <button type="button" class="btn primary" [disabled]="busy() || !auth.can('settings','edit')" (click)="save()">{{ busy() ? 'กำลังบันทึก…' : 'บันทึกข้อมูล' }}</button>
+        <button type="button" class="btn primary" [disabled]="busy() || !loaded() || !auth.can('settings','edit')" (click)="save()">{{ busy() ? 'กำลังบันทึก…' : 'บันทึกข้อมูล' }}</button>
       </div>
 
       <div class="form-grid">
@@ -79,12 +79,17 @@ export class CompanySettingsComponent implements OnInit {
 
   readonly company = signal<CompanyInfo>({ ...EMPTY });
   readonly busy = signal(false);
+  /** Saving sends the whole form, so it waits for the stored values. */
+  readonly loaded = signal(false);
   readonly message = signal('');
   readonly error = signal(false);
 
   ngOnInit(): void {
     this.api.get<CompanyInfo>('/company').subscribe({
-      next: (company) => this.company.set({ ...EMPTY, ...company }),
+      next: (company) => {
+        this.company.set({ ...EMPTY, ...company });
+        this.loaded.set(true);
+      },
       error: (error: unknown) => this.toast.error(apiErrorMessage(error)),
     });
   }
@@ -94,7 +99,7 @@ export class CompanySettingsComponent implements OnInit {
   }
 
   save(): void {
-    if (this.busy() || !this.auth.can('settings','edit')) return;
+    if (this.busy() || !this.loaded() || !this.auth.can('settings','edit')) return;
     this.busy.set(true);
     this.message.set('');
     this.api.put<CompanyInfo>('/company', this.company()).subscribe({

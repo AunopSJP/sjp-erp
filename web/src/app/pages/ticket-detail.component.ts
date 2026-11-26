@@ -243,11 +243,12 @@ export class TicketDetailComponent implements OnInit {
   }
 
   ngOnInit(): void {
-    this.meta.load();
+    // Reloaded because field help follows the company's SLA setting.
+    this.meta.load(true);
     this.api.get<{ slaSampleAlerts?: boolean }>('/company').subscribe({
       next: (company) => this.slaEnabled.set(company.slaSampleAlerts !== false),
-      // Same as the server default.
-      error: () => this.slaEnabled.set(true),
+      // Unknown setting: show no target rather than one that may be switched off.
+      error: () => this.slaEnabled.set(false),
     });
     this.api.get<Option[]>('/meta/options/users').subscribe({
       next: (users) => this.users.set(users),
