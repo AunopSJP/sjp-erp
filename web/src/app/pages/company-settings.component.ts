@@ -1,6 +1,7 @@
 import { ChangeDetectionStrategy, Component, OnInit, inject, signal } from '@angular/core';
 import { ApiService, apiErrorMessage } from '../core/api.service';
 import { AuthService } from '../core/auth.service';
+import { MetaService } from '../core/meta.service';
 import { ToastService } from '../shared/toast.service';
 
 interface CompanyInfo {
@@ -13,6 +14,7 @@ interface CompanyInfo {
   website: string;
   footerNote: string;
   governmentBidThreshold: number;
+  slaSampleAlerts: boolean;
 }
 
 const EMPTY: CompanyInfo = {
@@ -25,6 +27,7 @@ const EMPTY: CompanyInfo = {
   website: '',
   footerNote: '',
   governmentBidThreshold: 500_000,
+  slaSampleAlerts: true,
 };
 
 @Component({
@@ -55,6 +58,13 @@ const EMPTY: CompanyInfo = {
           <input id="lf-company-settings-component-9" type="number" min="0" [value]="company().governmentBidThreshold" (input)="set('governmentBidThreshold', +$any($event.target).value)" />
           <div class="muted small" style="margin-top:4px">โครงการราชการที่มูลค่าเกินเกณฑ์นี้ต้องบันทึกผล defended ICT = ผ่าน ก่อนจบขั้นเสนอ</div>
         </div>
+        <div class="field">
+          <label class="row" for="lf-company-settings-component-10">
+            <input id="lf-company-settings-component-10" type="checkbox" [checked]="company().slaSampleAlerts" (change)="set('slaSampleAlerts', $any($event.target).checked)" />
+            เตือน SLA จากตัวเลขตัวอย่าง
+          </label>
+          <div class="muted small" style="margin-top:4px">เป้าเวลาตามความเร่งด่วน (4/8/24/72 ชม.) ยังไม่ได้ยืนยันว่าเป็นข้อตกลงจริง เมื่อปิด ระบบจะไม่เตือนเกิน SLA และหน้า Ticket จะแสดงเฉพาะอายุเคส</div>
+        </div>
       </div>
       @if (message()) { <div class="notice" [class.bad]="error()" style="margin-top:12px">{{ message() }}</div> }
     </div>
@@ -64,6 +74,7 @@ const EMPTY: CompanyInfo = {
 export class CompanySettingsComponent implements OnInit {
   readonly auth = inject(AuthService);
   private readonly api = inject(ApiService);
+  private readonly meta = inject(MetaService);
   private readonly toast = inject(ToastService);
 
   readonly company = signal<CompanyInfo>({ ...EMPTY });
@@ -90,6 +101,8 @@ export class CompanySettingsComponent implements OnInit {
       next: (company) => {
         this.busy.set(false);
         this.company.set({ ...EMPTY, ...company });
+        // Field help depends on the company settings.
+        this.meta.load(true);
         this.error.set(false);
         this.message.set('บันทึกข้อมูลบริษัทแล้ว — PDF ใหม่จะใช้ข้อมูลนี้');
         this.toast.show('บันทึกข้อมูลบริษัทแล้ว');

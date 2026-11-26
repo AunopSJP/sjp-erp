@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { AccessService } from '../common/access.service.js';
 import { ApprovalStoreService } from '../common/approvals.service.js';
+import { CompanyService } from '../common/company.service.js';
 import { dateKeyOf, timeKeyOf, todayStr } from '../common/dates.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { projectSteps, WORKFLOWS } from '../meta/entities.js';
@@ -28,6 +29,7 @@ export class NotificationsService {
     private readonly records: RecordsService,
     private readonly access: AccessService,
     private readonly approvals: ApprovalStoreService,
+    private readonly company: CompanyService,
   ) {}
 
   list(user: SafeUser) {
@@ -63,7 +65,7 @@ export class NotificationsService {
       }
     }
 
-    if (this.access.canEntity(user, 'tickets', 'view')) {
+    if (this.company.get().slaSampleAlerts && this.access.canEntity(user, 'tickets', 'view')) {
       const statuses = WORKFLOWS.ticket.statuses;
       const now = Date.now();
       for (const ticket of this.records.all(user, 'tickets')) {

@@ -40,7 +40,7 @@ const SLA_HOURS: Record<string, number> = { เร่งด่วน: 4, สู�
 
         <div class="statbar">
           <div class="stat"><div class="l">สถานะ</div><div class="v"><span class="badge {{ statusColor(ticket['status']) }}">{{ statusLabel(ticket['status']) }}</span></div><div class="s">{{ ticket['priority'] }} · {{ ticket['category'] }}</div></div>
-          <div class="stat"><div class="l">อายุเคส</div><div class="v">{{ fmtDuration(age(ticket)) }}</div><div class="s">เป้าหมาย SLA {{ slaLimit(ticket) }} ชม. · นับจาก {{ fmtDateTime(ticket['receivedAt']) }}</div></div>
+          <div class="stat"><div class="l">อายุเคส</div><div class="v">{{ fmtDuration(age(ticket)) }}</div><div class="s">@if (slaEnabled()) {เป้าหมาย SLA {{ slaLimit(ticket) }} ชม. · }นับจาก {{ fmtDateTime(ticket['receivedAt']) }}</div></div>
           <div class="stat"><div class="l">เวลาตอบสนองครั้งแรก</div><div class="v">{{ response(ticket) }}</div><div class="s">{{ ticket['respondedAt'] ? fmtDateTime(ticket['respondedAt']) : 'ยังไม่ได้ตอบสนอง' }}</div></div>
           <div class="stat"><div class="l">เวลาแก้ไข/ปิด</div><div class="v">{{ resolve(ticket) }}</div><div class="s">{{ ticket['closedAt'] ? 'ปิดเมื่อ ' + fmtDateTime(ticket['closedAt']) : 'ยังไม่ปิดเคส' }}</div></div>
         </div>
@@ -201,9 +201,11 @@ export class TicketDetailComponent implements OnInit {
       .map((key) => this.meta.entity('tickets')?.fields.find((field) => field.key === key))
       .filter((field): field is FieldDef => !!field);
   });
+  /** Stays false until the company setting is known, so a disabled target never flashes. */
+  readonly slaEnabled = signal(false);
   readonly slaNotice = computed<{ tone: 'ok' | 'warn' | 'bad'; title: string; detail: string } | null>(() => {
     const ticket = this.record();
-    if (!ticket) return null;
+    if (!ticket || !this.slaEnabled()) return null;
     const status = this.statuses().find((item) => item.key === ticket['status']);
     if (status?.final) return null;
     const priority = String(ticket['priority'] ?? 'ปกติ');
@@ -242,6 +244,11 @@ export class TicketDetailComponent implements OnInit {
 
   ngOnInit(): void {
     this.meta.load();
+    this.api.get<{ slaSampleAlerts?: boolean }>('/company').subscribe({
+      next: (company) => this.slaEnabled.set(company.slaSampleAlerts !== false),
+      // Same as the server default.
+      error: () => this.slaEnabled.set(true),
+    });
     this.api.get<Option[]>('/meta/options/users').subscribe({
       next: (users) => this.users.set(users),
       error: () => this.users.set([]),

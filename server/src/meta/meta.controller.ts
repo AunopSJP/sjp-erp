@@ -4,8 +4,9 @@ import { UsersService } from '../auth/users.service.js';
 import type { SafeUser } from '../auth/user.types.js';
 import { AccessService } from '../common/access.service.js';
 import { AuditService } from '../common/audit.service.js';
+import { CompanyService } from '../common/company.service.js';
 import { bad, forbidden } from '../common/exceptions.js';
-import { ENTITY_DEFS, ENTITY_WORKFLOW_KEY, getEntity, LISTS, NAV, RESOURCE_LABELS, WORKFLOWS, type EntityDef, type EntityInput } from './entities.js';
+import { ENTITY_DEFS, ENTITY_WORKFLOW_KEY, getEntity, LISTS, NAV, RESOURCE_LABELS, SLA_OFF_HELP, WORKFLOWS, type EntityDef, type EntityInput } from './entities.js';
 import { CreateFieldDto, EntityDto, ListsDto, RenameFieldDto, RoleDto, UpdateFieldDto, WorkflowDto } from './meta.dto.js';
 import { RecordsService } from '../records/records.service.js';
 import { MetadataService } from './metadata.service.js';
@@ -18,6 +19,7 @@ export class MetaController {
     private readonly access: AccessService,
     private readonly metadata: MetadataService,
     private readonly audit: AuditService,
+    private readonly company: CompanyService,
   ) {}
 
   @Get()
@@ -42,6 +44,10 @@ export class MetaController {
         },
       ]),
     );
+    const tickets = entities['tickets'];
+    if (tickets && !this.company.get().slaSampleAlerts) {
+      tickets.fields = tickets.fields.map((field) => (field.help && SLA_OFF_HELP.has(field.help) ? { ...field, help: SLA_OFF_HELP.get(field.help) } : field));
+    }
     return {
       entities,
       workflows: Object.fromEntries(Object.entries(WORKFLOWS).filter(([key]) => !hiddenCustom.has(key))),

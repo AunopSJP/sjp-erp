@@ -186,6 +186,16 @@ export interface ProjectStepDef {
   tracks?: string[];
 }
 
+/** Ticket field help that mentions the built-in SLA numbers. */
+const SLA_PRIORITY_HELP = 'SLA: เร่งด่วน 4 ชม. · สูง 8 ชม. · ปกติ 24 ชม. · ต่ำ 72 ชม.';
+const SLA_RECEIVED_HELP = 'ใช้คำนวณอายุเคสและเวลา SLA';
+
+/** What each of those help texts becomes when the sample SLA alerts are off. */
+export const SLA_OFF_HELP = new Map<string, string | undefined>([
+  [SLA_PRIORITY_HELP, undefined],
+  [SLA_RECEIVED_HELP, 'ใช้คำนวณอายุเคส'],
+]);
+
 const f = (key: string, label: string, type: FieldType = 'text', extra: Partial<FieldDef> = {}): FieldDef => ({
   key,
   label,
@@ -822,7 +832,7 @@ export const ENTITY_DEFS: Record<string, EntityDef> = {
       f('title', 'หัวข้อ/ชื่อจุด', 'text', { required: true }),
       f('reportedBy', 'ผู้แจ้ง', 'text', { required: true }),
       f('channel', 'ช่องทางแจ้ง', 'select', { options: ['โทรศัพท์', 'LINE', 'อีเมล', 'เว็บ/ระบบ', 'หน้างาน', 'อื่นๆ'] }),
-      f('receivedAt', 'วันเวลาที่รับเรื่อง', 'datetime', { required: true, help: 'ใช้คำนวณอายุเคสและเวลา SLA' }),
+      f('receivedAt', 'วันเวลาที่รับเรื่อง', 'datetime', { required: true, help: SLA_RECEIVED_HELP }),
       f('customer', 'ลูกค้า', 'ref', { ref: 'customers', required: true }),
       f('project', 'โครงการ', 'ref', { ref: 'projects' }),
       f('site', 'ไซต์', 'ref', { ref: 'sites', required: true, optionFilter: { by: 'customer', targetField: 'customer' }, help: 'ต้องตรงกับไซต์ของลูกค้า ระบบจะตรวจให้' }),
@@ -831,7 +841,7 @@ export const ENTITY_DEFS: Record<string, EntityDef> = {
       f('item', 'อุปกรณ์/รุ่น', 'ref', { ref: 'items' }),
       f('serial', 'Serial Number', 'ref', { ref: 'serials' }),
       f('category', 'หมวดงาน', 'select', { options: ['IT Support', 'Hardware', 'Software', 'Network', 'CCTV', 'PA', 'Spare Part', 'PM', 'อื่นๆ'], required: true }),
-      f('priority', 'ความเร่งด่วน', 'select', { options: ['ต่ำ', 'ปกติ', 'สูง', 'เร่งด่วน'], required: true, help: 'SLA: เร่งด่วน 4 ชม. · สูง 8 ชม. · ปกติ 24 ชม. · ต่ำ 72 ชม.' }),
+      f('priority', 'ความเร่งด่วน', 'select', { options: ['ต่ำ', 'ปกติ', 'สูง', 'เร่งด่วน'], required: true, help: SLA_PRIORITY_HELP }),
       f('symptom', 'อาการ', 'textarea', { required: true }),
       f('description', 'รายละเอียดเพิ่มเติม', 'textarea'),
       f('initialFinding', 'ผลตรวจเบื้องต้น', 'textarea'),
