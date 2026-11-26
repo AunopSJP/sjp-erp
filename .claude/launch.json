@@ -2,9 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "api",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "server", "run", "start:dev"],
+      "port": 3000
+    },
+    {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "web", "start", "--", "--port", "4300", "--proxy-config", "C:/Users/RiGKu/AppData/Local/Temp/claude/d74ce0b0ae5a6c31/6ea0d71b-4c9c-4f0f-9f26-b7bd4e7563a3/scratchpad/proxy.json"],
+      "runtimeArgs": ["--prefix", "web", "start", "--", "--port", "4300"],
       "port": 4300
     }
   ]
